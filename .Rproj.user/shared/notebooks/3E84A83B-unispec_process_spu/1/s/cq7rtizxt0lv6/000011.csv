@@ -1,0 +1,4 @@
+"0","if (spu_sites!= key_sites) {"
+"0","     cat(paste('**The site names between the .spu filenames and in the key file do not match!**',"
+"0","                  "".spu: "",spu_sites,""key:"", key_sites))"
+"0","}"

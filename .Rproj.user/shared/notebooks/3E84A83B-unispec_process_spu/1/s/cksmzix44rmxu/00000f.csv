@@ -1,0 +1,6 @@
+"0",""
+"0","if(any(is.na(missing_info$spu_filename_full))) {"
+"0","  cat(paste('**There are Key File entries without .spu files**',  'Check previous tables for unexpected results.',sep = ""\n""),""\n"")"
+"0","  file.remove (paste0(tools::file_path_sans_ext(rstudioapi::getActiveDocumentContext()$path),"".nb.html""))"
+"0","  stop(""Missing .spu files. Run aborted"")"
+"0","}"

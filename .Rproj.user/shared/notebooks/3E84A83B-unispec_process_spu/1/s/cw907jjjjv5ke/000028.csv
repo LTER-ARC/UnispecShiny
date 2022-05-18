@@ -1,0 +1,16 @@
+"0","(ref_plot1 <- ggplot(ref_data,aes(x = Wavelength, y = correction_factor,
+                        group_by = spu_filename)) + 
+     theme(legend.position=""left"") + 
+     geom_line(aes(color=factor(FileNum))) +
+    scale_color_discrete(name =""File Number"") +
+     facet_grid(Site ~ Treatment) +
+      # Formatting
+  labs(title = ""White Reference Raw Scan"",
+       subtitle = ""They all should be very similar."",
+       x = ""Wavelength (nm)"", 
+       y = ""Raw Reflectance"")
+)
+"
+"2","Warning:"
+"2"," Removed 180 row(s) containing missing values (geom_path).
+"
