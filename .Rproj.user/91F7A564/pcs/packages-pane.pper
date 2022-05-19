@@ -1,7 +1,0 @@
-{
-    "installOptions": {
-        "installFromRepository": true,
-        "libraryPath": "C:/Users/jl01596/AppData/Local/R/win-library/4.2",
-        "installDependencies": true
-    }
-}
