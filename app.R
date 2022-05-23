@@ -149,6 +149,9 @@ server <- function(input, output, session) {
   
   # * Combine the key file info with the spu data -------------------------------
   full_data <- reactive({
+    id <- showNotification("Combining data...", duration = NULL, closeButton = FALSE)
+    on.exit(removeNotification(id), add = TRUE)
+    
     fd <- left_join(keys(), spu_df(),by = c("Date", "Site", "FileNum","spu_filename")) %>%
       arrange(DateTime) %>%
       mutate_at(.vars = vars(Site, Block, Treatment), .funs = factor)
@@ -162,6 +165,9 @@ server <- function(input, output, session) {
   
   # * Check for missing information --------------------------------------------
   missing_info <- reactive ({
+    id <- showNotification("Checking for missing data...", duration = NULL, closeButton = FALSE)
+    on.exit(removeNotification(id), add = TRUE)
+    
     req(full_data())
     M_data <- full_data() %>% 
       filter(is.na(spu_filename) | 
@@ -255,6 +261,9 @@ server <- function(input, output, session) {
   
  # * Calculate Indices ----------------------------------------------------- 
   index_data <- reactive ({
+    id <- showNotification("Please wait. Calculating Indices...", duration = NULL, closeButton = FALSE)
+    on.exit(removeNotification(id), add = TRUE)
+    
     data_corrected_ref_integration() %>%
     select(-ChB, -ChA, -raw_reflectance, -correction_factor) %>%
     rename(Reflectance = corrected_reflectance) %>%
@@ -323,27 +332,13 @@ server <- function(input, output, session) {
 ## ------Combined Key and spu data Tab
   output$all_data <- DT::renderDataTable({
     req(input$key_file)
-    withProgress(message = "Loading spu files",
-                 detail = 'This may take a while...', value = 0, {
-                   for (i in 1:5) {
-                     incProgress(1/5)
-                     Sys.sleep(0.25)
-                   }
-                   full_data() %>% select(-Spectra)
-                 })
+    full_data() %>% select(-Spectra)
   })
   
 ## ------Checks Tab ------------------------------------------
   
   output$missing_data <- DT::renderDataTable({
     req(input$key_file)
-    withProgress(message = "Loading spu files",
-                 detail = 'This may take a while...', value = 0, {
-                   for (i in 1:15) {
-                     incProgress(1/15)
-                     Sys.sleep(0.25)
-                   }
-                 })  
     missing_info()
     })
   
@@ -400,7 +395,7 @@ server <- function(input, output, session) {
   })
   output$download_corrected_data <- downloadHandler(
     filename = function() {
-      paste0(data_corrected_ref_integration()$Date[1], "_corredted.rds")
+      paste0(data_corrected_ref_integration()$Date[1], "_corrected.rds")
     },
     content = function(file) {
       write_rds(data_corrected_ref_integration(), file)
@@ -412,6 +407,14 @@ server <- function(input, output, session) {
     },
     content = function(file) {
       write_rds(full_data(), file)
+    }
+  )
+  output$download_indices_data <- downloadHandler(
+    filename = function() {
+      paste0(index_data()$Date[1], "_index.rds")
+    },
+    content = function(file) {
+      write_rds(index_data(), file)
     }
   )
 # ---- MainPanel tabset renderUI code-------------------------
@@ -430,18 +433,17 @@ server <- function(input, output, session) {
         tabPanel("Field Keys",DT::dataTableOutput("key_table")),
         tabPanel("All data combined",DT::dataTableOutput("all_data")),
         tabPanel("Checks",h5(".spu files in Key data table but not in the .spu folder."),
-                h6("If any files are listed below, the .spu files are in the key file but
-                   not found in the .spu folder."),
+                h6("If any files are listed below, the .spu files are in the key file but not found in the .spu folder."),
                  div(DT::dataTableOutput("missing_data"),style = "font-size:80%"),
                  hr(),
-                tableOutput("not_in_key")),
-                tableOutput("checks_table"),
+                tableOutput("not_in_key"),
+                tableOutput("checks_table")),
         tabPanel("References Plots", plotlyOutput("ref_plot1"),
                  plotlyOutput("ref_plot2")
                  ),
         tabPanel("Save Files", downloadButton("download_corrected_data", "Save corrected spectra as .rds"),
-                 downloadButton("download_full_data", "Save uncorrected spectra as .rds")
-        )
+                 downloadButton("download_full_data", "Save uncorrected spectra as .rds"),
+                 downloadButton("download_indices_data", "Save indices as .rds"))
         )
   })
 }
