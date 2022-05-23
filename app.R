@@ -12,7 +12,7 @@ library(tidyverse)
 library(DT)
 
 
-# Define UI for application that 
+# Define UI for application that ----
 ui <- fluidPage(
     shinyFeedback::useShinyFeedback(),
     tags$head(
@@ -49,10 +49,10 @@ server <- function(input, output, session) {
   source("R/helper.R",local = TRUE)
   
   
-  #--------Sidebar additional UIs ---------------------------------------------
+##--------Sidebar additional UIs ---------------------------------------------
   
-  # Select input widget with the list of file loaded input$file but filtered
-  # by files_trtment_choice
+  # * Select input widget ----
+  # with the list of file loaded input$file but filtered by files_trtment_choice
   output$selectfile <- renderUI({
    req(input$file, input$key_file, input$choice_input)
     select_input <- as_tibble(
@@ -77,14 +77,14 @@ server <- function(input, output, session) {
       )
     )
   })
-  # Table to show key files uploaded
+  # * Table to show key files uploaded ----
   output$keyfiles_loaded <- renderUI({
     req(input$key_file)
     div(
     renderTable(input$key_file%>% select(name)),
     style = "font-size:80%")
   })
-  # Select box for treatments and maxed out files.
+  # * Select box for treatments and maxed out files.----
   output$treatments <- renderUI({
     req(input$key_file)
     selectInput("choice_input", "Treament",
@@ -115,13 +115,12 @@ server <- function(input, output, session) {
   #   })
   #   })
  #__________________________________________________________________________
- #----Reactive outputs ----
+#----Reactive outputs ----
   
-  # Read in the Excel key files and output a combined table if more then one file
-  #  Using shinyFeedback to warn about incorrect file selection
- 
+  # * Read in the Excel key files ---------------------------------------
+  #and output a combined table if more then one file.  Using shinyFeedback
+  # to warn about incorrect file selection
   keys <- reactive({
-#browser()
     req(input$key_file)
     check_ext(input$key_file$name,"xlsx","Invalid file; Please select a .xlsx file")
     input$key_file$datapath %>% purrr::map(function(file_name)
@@ -136,7 +135,7 @@ server <- function(input, output, session) {
         by = c("Site", "FileNum")
       )
   })
-  # read the .spu data
+  # * Read the .spu data ---------------------------------------------------
   spu_df <- reactive({
     req(input$file)
     # Read metadata text lines (9) from the spu files
@@ -148,7 +147,7 @@ server <- function(input, output, session) {
     return(spu_filedata)
   })
   
-  #Combine the key file info with the spu data
+  # * Combine the key file info with the spu data -------------------------------
   full_data <- reactive({
     fd <- left_join(keys(), spu_df(),by = c("Date", "Site", "FileNum","spu_filename")) %>%
       arrange(DateTime) %>%
@@ -161,7 +160,7 @@ server <- function(input, output, session) {
     return(fd)
   })
   
-  #Check for missing information 
+  # * Check for missing information --------------------------------------------
   missing_info <- reactive ({
     req(full_data())
     M_data <- full_data() %>% 
@@ -178,7 +177,7 @@ server <- function(input, output, session) {
     return(M_data)
   })
   
- # Table of checks
+ # * Table of checks ------------------------------------------------------
   checks_table<- reactive({
     spu_sites <-str_c(str_replace_na(unique( spu_df()$Site)), collapse = ",")
     key_sites <- str_c(str_replace_na(unique(keys()$Site)), collapse = ",")
@@ -189,7 +188,7 @@ server <- function(input, output, session) {
     return(txt_s)  
   }) 
   
-  # Identify any files that aren't listed in the field key
+  # * Identify any files that aren't listed in the field key--------------------
   files_not_in_key <- reactive({
     data.frame(
      spuFiles_Not_in_Keys = anti_join(spu_df(), keys(),by = c("Date", "FileNum", "Site"))%>%
@@ -197,7 +196,7 @@ server <- function(input, output, session) {
     )
   })
   
-  # Reference data
+  # * Reference data  -----------------------------------------------------------
   ref_data <- reactive ({
     req(full_data())
     refdata<-full_data() %>%
@@ -211,8 +210,12 @@ server <- function(input, output, session) {
     group_by(Date, Site, Integration, Wavelength)
     return(refdata)
     })
-  
-  # Maxed out spectra 
+  correction_factors <- reactive ({
+    ref_data() %>% 
+    summarize(correction_factor = mean(ChA/ChB), 
+              ref_filenames = str_c(spu_filename,collapse = ", "))
+    }) 
+  # * Maxed out spectra --------------------------------------------------------
   maxed_files <-  reactive ({
    req(full_data()) #,all(!is.na(full_data()$spu_filename)))
    full_data() %>% 
@@ -221,8 +224,48 @@ server <- function(input, output, session) {
     select(spu_filename) %>%
     unique() 
   })
+  # * Get integration times of ref data for each site --------------------------
+  ref_int_values <- reactive({ 
+  full_data() %>%
+    filter((Treatment == "REF")) %>%
+    select(Date,Site,Integration) %>%
+    distinct()
+  })
+  # * Join reference scan integration time -----------------------------------
+  # to the nearest data scan integration time
+  data_corrected_ref_integration <- reactive ({
+    inner_join(full_data(), ref_int_values(), by = c("Date","Site"),suffix = c(".data",".ref")) %>%
+    group_by(Date,Site,FileNum) %>%
+    mutate(Integration.ref = Integration.ref[which.min(abs(Integration.data-Integration.ref))]) %>%
+    distinct(FileNum, .keep_all = TRUE) %>%
+    unnest(Spectra) %>% 
+    filter(Wavelength > 400, Wavelength < 1000) %>%
+      filter(!Treatment %in% c("DARK", "REF")) %>%
+    # # assign the "REF_Integration" value closest to data scan integration time
+    rowwise() %>%
+    group_by(Date, Site, Integration.ref) %>%
+    # join data with ref data
+    left_join(.,correction_factors() %>% rename(Integration.ref = Integration), 
+              by = c("Date", "Site", "Wavelength", "Integration.ref")) %>%
+    ungroup() %>% 
+    # calculate reflectances
+    mutate(raw_reflectance = ChB/ChA) %>% # the raw reflectance
+    mutate(corrected_reflectance = raw_reflectance*correction_factor)
+  })
   
-  #------ Plot Spectra Tab------------------------
+ # * Calculate Indices ----------------------------------------------------- 
+  index_data <- reactive ({
+    data_corrected_ref_integration() %>%
+    select(-ChB, -ChA, -raw_reflectance, -correction_factor) %>%
+    rename(Reflectance = corrected_reflectance) %>%
+    nest(Spectra = c(Wavelength, Reflectance)) %>%
+  # Calculate NDVI
+    mutate(Indices = map(Spectra, function(x) calculate_indices(x, 
+                band_defns = band_defns, instrument = "MODIS", indices = c("NDVI", "EVI", "EVI2")))
+           )
+    })
+  
+##----Plot Spectra Tab ----------------------------------------------------
   
   #   This reactivate output contains the raw spectra in an x-y line plot format
   observeEvent(input$Select,ignoreNULL = TRUE, {  # Only output plot if there is a file selected.
@@ -270,14 +313,14 @@ server <- function(input, output, session) {
   })
   }) #Closing of observeEvent
   
- #---- Key file table  Tab ---------------------------------------------------
+##---- Key file table  Tab ---------------------------------------------------
 
   # Output a table of all the information in the key file(s) 
   output$key_table <- DT::renderDataTable({
     req(input$key_file)
     keys()
     })
- # ------Combined Key and spu data Tab
+## ------Combined Key and spu data Tab
   output$all_data <- DT::renderDataTable({
     req(input$key_file)
     withProgress(message = "Loading spu files",
@@ -290,7 +333,7 @@ server <- function(input, output, session) {
                  })
   })
   
- # ------Checks Tab ------------------------------------------
+## ------Checks Tab ------------------------------------------
   
   output$missing_data <- DT::renderDataTable({
     req(input$key_file)
@@ -311,7 +354,7 @@ server <- function(input, output, session) {
     files_not_in_key()
     })
     
-  #--- Plot References Tab----------------------------------------
+##--- Plot References Tab----------------------------------------
   
   output$ref_plot1 <- renderPlotly({
     plotly::ggplotly(
@@ -351,18 +394,29 @@ server <- function(input, output, session) {
     )
   })
   
-  #  Save Files Tab ----------------------------------------------------------
-  output$download <- downloadHandler(
+##--- Save Files Tab ----------------------------------------------------------
+  output$corrected_data <-  DT::renderDataTable({
+    
+  })
+  output$download_corrected_data <- downloadHandler(
     filename = function() {
-      paste0(full_data()$Date[1], ".rds")
+      paste0(data_corrected_ref_integration()$Date[1], "_corredted.rds")
+    },
+    content = function(file) {
+      write_rds(data_corrected_ref_integration(), file)
+    }
+  )
+  output$download_full_data <- downloadHandler(
+    filename = function() {
+      paste0(full_data()$Date[1], "_combined.rds")
     },
     content = function(file) {
       write_rds(full_data(), file)
     }
   )
-  # ---- MainPanel tabset renderUI code-------------------------
-  # generate the tabsets when the file is loaded. 
-  # Until the file is loaded, app will not show the tabset.
+# ---- MainPanel tabset renderUI code-------------------------
+# generate the tabsets when the file is loaded. 
+# Until the file is loaded, app will not show the tabset.
   output$tb <- renderUI({
     req(input$file, input$key_file)
     tabsetPanel(
@@ -375,17 +429,18 @@ server <- function(input, output, session) {
                    style = "font-size:80%")),
         tabPanel("Field Keys",DT::dataTableOutput("key_table")),
         tabPanel("All data combined",DT::dataTableOutput("all_data")),
-        tabPanel("Checks",h5("Key data table: .spu files in table but on in the .spu folder."),
-                h6("If any files are listed below, the .spu files are 
+        tabPanel("Checks",h5(".spu files in Key data table but not in the .spu folder."),
+                h6("If any files are listed below, the .spu files are in the key file but
                    not found in the .spu folder."),
                  div(DT::dataTableOutput("missing_data"),style = "font-size:80%"),
                  hr(),
-                 tableOutput("checks_table"),
-                 tableOutput("not_in_key")),
+                tableOutput("not_in_key")),
+                tableOutput("checks_table"),
         tabPanel("References Plots", plotlyOutput("ref_plot1"),
                  plotlyOutput("ref_plot2")
                  ),
-        tabPanel("Save Files as .rds files", downloadButton("download", "Save as .rds")
+        tabPanel("Save Files", downloadButton("download_corrected_data", "Save corrected spectra as .rds"),
+                 downloadButton("download_full_data", "Save uncorrected spectra as .rds")
         )
         )
   })
