@@ -179,7 +179,7 @@ server <- function(input, output, session) {
              # don't care about EXTRA, VEG, or REF scans
              Treatment != "EXTRA|VEG|REF") %>%
       # reorder columns to see output better
-      select(spu_filename, FileNum, Site, Block, Treatment, Replicate, everything())
+      select(spu_filename, FileNum, Site, Block, Treatment, Replicate)
     return(M_data)
   })
   
@@ -190,7 +190,7 @@ server <- function(input, output, session) {
     file_check <- paste("Does number of .spu files -", nrow(spu_df()), ", match what's entered in key file -", nrow(keys()),"?")
     site_check <- paste("Sites from names of spu files:", spu_sites, "should match sites in key file(s):", key_sites)
     maxedspectra <- paste("Maxed out spectra",maxed_files())
-    txt_s <- data.frame(Checks = c(site_check,file_check,maxedspectra))
+    txt_s <- datatable(tibble(Checks = c(site_check,file_check,maxedspectra)),options = list(dom = 't'))
     return(txt_s)  
   }) 
   
@@ -339,12 +339,15 @@ server <- function(input, output, session) {
   
   output$missing_data <- DT::renderDataTable({
     req(input$key_file)
-    missing_info()
+    DT::datatable(
+      missing_info(),
+      caption= "Checks for missing information") %>%
+      DT::formatStyle(names(missing_info()), backgroundColor = styleEqual(NA, "red"))
     })
   
-  output$checks_table <- renderTable(checks_table())
+  output$checks_table <- DT::renderDataTable(checks_table())
   
-  output$not_in_key <- renderTable({
+  output$not_in_key <- DT::renderDataTable({
     if(nrow(files_not_in_key())<1){return()}
     files_not_in_key()
     })
@@ -430,20 +433,24 @@ server <- function(input, output, session) {
                    hr(),
                    tableOutput("metatable"),
                    style = "font-size:80%")),
-        tabPanel("Field Keys",DT::dataTableOutput("key_table")),
-        tabPanel("All data combined",DT::dataTableOutput("all_data")),
-        tabPanel("Checks",h5(".spu files in Key data table but not in the .spu folder."),
-                h6("If any files are listed below, the .spu files are in the key file but not found in the .spu folder."),
-                 div(DT::dataTableOutput("missing_data"),style = "font-size:80%"),
-                 hr(),
-                tableOutput("not_in_key"),
-                tableOutput("checks_table")),
+        tabPanel("Field Keys",DT::dataTableOutput("key_table")
+                 ),
+        tabPanel("All data combined",DT::dataTableOutput("all_data")
+                 ),
+        tabPanel("Checks",h5("Checks on key and .spu files "),
+                h6("Review the below tables for missing or incorrect information and for maxed out spectra."),
+                div(DT::dataTableOutput("missing_data"),
+                DT::dataTableOutput("not_in_key"),
+                DT::dataTableOutput("checks_table"),
+                style = "font-size:80%")
+                ),
         tabPanel("References Plots", plotlyOutput("ref_plot1"),
                  plotlyOutput("ref_plot2")
                  ),
         tabPanel("Save Files", downloadButton("download_corrected_data", "Save corrected spectra as .rds"),
                  downloadButton("download_full_data", "Save uncorrected spectra as .rds"),
-                 downloadButton("download_indices_data", "Save indices as .rds"))
+                 downloadButton("download_indices_data", "Save indices as .rds")
+                 )
         )
   })
 }
