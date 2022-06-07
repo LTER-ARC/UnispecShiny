@@ -23,6 +23,18 @@ ui <- fluidPage(
       }
     "))
     ),
+    tags$head(
+      tags$style(
+        HTML(
+        ".shiny-notification {
+             position:fixed;
+             top: calc(50%);
+             left: calc(50%);
+             }
+             "
+        )
+      )
+    ),
     titlePanel("Unispec QAQC"),
     sidebarLayout(
       sidebarPanel(
@@ -55,6 +67,7 @@ server <- function(input, output, session) {
   # with the list of file loaded input$file but filtered by files_trtment_choice
   output$selectfile <- renderUI({
    req(input$file, input$key_file, input$choice_input)
+    check_ext("file",input$file$name,"spu","Invalid file; Please select .spu files")
     select_input <- as_tibble(
       switch(input$choice_input,
              All = {input$file %>% select(spu_filename=name)},
@@ -118,11 +131,18 @@ server <- function(input, output, session) {
 #----Reactive outputs ----
   
   # * Read in the Excel key files ---------------------------------------
-  #and output a combined table if more then one file.  Using shinyFeedback
+  # and output a combined table if more then one file.  Using shinyFeedback
   # to warn about incorrect file selection
   keys <- reactive({
     req(input$key_file)
-    check_ext(input$key_file$name,"xlsx","Invalid file; Please select a .xlsx file")
+    req(input$file)
+    check_ext("key_file",input$key_file$name,"xlsx","Invalid file; Please select a .xlsx file")
+    # Check for required column names
+    column_names <-input$key_file$datapath %>% purrr::map(function(file_name)
+      as_tibble(openxlsx::read.xlsx(file_name, sheet = 1, colNames = T, rows = 1,cols = c(1:7)))) %>%
+      reduce(rbind) %>% names() %>% str_trim()
+    template_headers <- c("Date","Site","Block","Treatment","Replicate","Location","FileNum")
+    check_header(column_names,template_headers)
     input$key_file$datapath %>% purrr::map(function(file_name)
       as_tibble(openxlsx::read.xlsx(file_name, sheet = 1, detectDates = T,cols = c(1:7)))) %>%
       reduce(rbind) %>%
