@@ -185,10 +185,17 @@ check_scan_times <- function(raw_data) {
   
   return(time_check)
 }
-# Check slected file extenstion
+# Check selected file extension
 
-check_ext <- function(in_file,f_ext,ERR_message) {
+check_ext <- function(input_id,in_file,f_ext,ERR_message) {
   correct_ext <- all(tools::file_ext(in_file)==f_ext)
-  shinyFeedback::feedbackWarning("key_file",!correct_ext,ERR_message)
+  shinyFeedback::feedbackWarning(input_id,!correct_ext,ERR_message)
   req(correct_ext, cancelOutput = TRUE)
+}
+# Check the excel header row for required column names
+check_header <- function(key_column_names,headers) {
+  correct_headers <- all(headers %in% key_column_names)
+  shinyFeedback::feedbackWarning("key_file",!correct_headers,"Check Excel file column names.")
+  if (!correct_headers) {showNotification(paste("Column names should match ",toString(headers)),duration = 15,type = "error")}
+  req(correct_headers, cancelOutput = TRUE)
 }
