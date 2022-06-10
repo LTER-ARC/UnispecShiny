@@ -234,6 +234,11 @@ server <- function(input, output, session) {
     mutate(correction_factor = ChA / ChB) %>%
     ### Group repeated REF measurements based on your plot set-up (choose Block or NOT)
     group_by(Date, Site, Integration, Wavelength)
+    shinyFeedback::feedbackWarning(
+      inputId = "key_file",
+      any(is.na(refdata$correction_factor)),
+      text = "A reference file has a NA for correction factor.")
+    req(!any(is.na(refdata$correction_factor)),cancelOutput = TRUE)
     return(refdata)
     })
   correction_factors <- reactive ({
@@ -260,13 +265,14 @@ server <- function(input, output, session) {
   # * Join reference scan integration time -----------------------------------
   # to the nearest data scan integration time
   data_corrected_ref_integration <- reactive ({
+    req(full_data, input$key_file)
     inner_join(full_data(), ref_int_values(), by = c("Date","Site"),suffix = c(".data",".ref")) %>%
     group_by(Date,Site,FileNum) %>%
+     filter(!Treatment %in% c("DARK", "REF")) %>%
     mutate(Integration.ref = Integration.ref[which.min(abs(Integration.data-Integration.ref))]) %>%
     distinct(FileNum, .keep_all = TRUE) %>%
     unnest(Spectra) %>% 
     filter(Wavelength > 400, Wavelength < 1000) %>%
-      filter(!Treatment %in% c("DARK", "REF")) %>%
     # # assign the "REF_Integration" value closest to data scan integration time
     rowwise() %>%
     group_by(Date, Site, Integration.ref) %>%
