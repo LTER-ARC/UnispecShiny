@@ -139,18 +139,18 @@ server <- function(input, output, session) {
     check_ext("key_file",input$key_file$name,"xlsx","Invalid file; Please select a .xlsx file")
     # Check for required column names
     column_names <-input$key_file$datapath %>% purrr::map(function(file_name)
-      as_tibble(openxlsx::read.xlsx(file_name, sheet = 1, colNames = T, rows = 1,cols = c(1:7)))) %>%
+      as_tibble(openxlsx::read.xlsx(file_name, sheet = 2, colNames = T, rows = 1,cols = c(1:7)))) %>%
       reduce(rbind) %>% names() %>% str_trim()
-    template_headers <- c("Date","Site","Block","Treatment","Replicate","Location","FileNum")
+    template_headers <- c("Date","Site","Block","Treatment","Replicate","FileNum")
     check_header(column_names,template_headers)
     input$key_file$datapath %>% purrr::map(function(file_name)
-      as_tibble(openxlsx::read.xlsx(file_name, sheet = 1, detectDates = T,cols = c(1:7)))) %>%
+      as_tibble(openxlsx::read.xlsx(file_name, sheet = 2, detectDates = T,cols = c(1:7)))) %>%
       reduce(rbind) %>%
       mutate(across(where(is.character), str_trim)) %>%
       left_join(
         input$file %>% 
           select(spu_filename = name) %>%
-          mutate(Site = toupper(str_extract(spu_filename, "[A-Za-z]{3,}[0-9]{1,2}(?=_)"))) %>%
+          mutate(Site = toupper(str_extract(spu_filename, "[A-Za-z]{3,}[0-9]{1,2}"))) %>%
           mutate(FileNum = str_extract(spu_filename, "\\d{5}") %>% as.numeric()),
         by = c("Site", "FileNum")
       )
@@ -160,7 +160,7 @@ server <- function(input, output, session) {
     req(input$file)
     # Read metadata text lines (9) from the spu files
     spu_filedata <- pmap_dfr(list(input$file$datapath,input$file$name), read_spu_file_metadata) %>%
-    mutate(Site = toupper(str_extract(spu_filename, "[A-Za-z]{3,}[0-9]{1,2}(?=_)"))) %>%
+    mutate(Site = toupper(str_extract(spu_filename, "[A-Za-z]{3,}[0-9]{1,2}"))) %>%
     mutate(Spectra=map(input$file$datapath, function(x) read_spu_file_spectra(x))) %>% 
     mutate(Date = date(DateTime)) %>%
     relocate(Date, .after = DateTime)
@@ -331,7 +331,7 @@ server <- function(input, output, session) {
     req(input$file,input$key_file)
     if(is.null(input$Select)){return()}
     input_file_num <- as.integer(str_extract(input$Select, "\\d{5}"))
-    input_site = toupper(str_extract(input$Select, "[A-Za-z]{3,}[0-9]{1,2}(?=_)"))
+    input_site = toupper(str_extract(input$Select, "[A-Za-z]{3,}[0-9]{1,2}"))
     key_info <- keys() %>% dplyr::filter(FileNum == input_file_num & Site == input_site)
     validate(need(nrow(key_info) > 0, "No Key information found for this .spu file."))
     return(key_info)
