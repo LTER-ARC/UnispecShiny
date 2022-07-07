@@ -150,7 +150,7 @@ server <- function(input, output, session) {
       left_join(
         input$file %>% 
           select(spu_filename = name) %>%
-          mutate(Site = toupper(str_extract(spu_filename, "[A-Za-z]{3,}[0-9]{1,2}"))) %>%
+          mutate(Site = toupper(str_extract(spu_filename, "^[:alnum:]{3,}"))) %>%
           mutate(FileNum = str_extract(spu_filename, "\\d{5}") %>% as.numeric()),
         by = c("Site", "FileNum")
       )
@@ -160,7 +160,7 @@ server <- function(input, output, session) {
     req(input$file)
     # Read metadata text lines (9) from the spu files
     spu_filedata <- pmap_dfr(list(input$file$datapath,input$file$name), read_spu_file_metadata) %>%
-    mutate(Site = toupper(str_extract(spu_filename, "[A-Za-z]{3,}[0-9]{1,2}"))) %>%
+    mutate(Site = toupper(str_extract(spu_filename, "^[:alnum:]{3,}"))) %>%
     mutate(Spectra=map(input$file$datapath, function(x) read_spu_file_spectra(x))) %>% 
     mutate(Date = date(DateTime)) %>%
     relocate(Date, .after = DateTime)
@@ -331,7 +331,7 @@ server <- function(input, output, session) {
     req(input$file,input$key_file)
     if(is.null(input$Select)){return()}
     input_file_num <- as.integer(str_extract(input$Select, "\\d{5}"))
-    input_site = toupper(str_extract(input$Select, "[A-Za-z]{3,}[0-9]{1,2}"))
+    input_site = toupper(str_extract(input$Select, "^[:alnum:]{3,}"))
     key_info <- keys() %>% dplyr::filter(FileNum == input_file_num & Site == input_site)
     validate(need(nrow(key_info) > 0, "No Key information found for this .spu file."))
     return(key_info)
