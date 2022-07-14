@@ -55,11 +55,13 @@ ui <- fluidPage(
     )
 )
 
-# Define server logic 
+# Define server logic ----
 server <- function(input, output, session) {
   # Helper functions and required libraries
   source("R/helper.R",local = TRUE)
   
+  # Columns names in temple file
+  header_check <- "FileNum" 
   
 ##--------Sidebar additional UIs ---------------------------------------------
   
@@ -134,17 +136,14 @@ server <- function(input, output, session) {
   # and output a combined table if more then one file.  Using shinyFeedback
   # to warn about incorrect file selection
   keys <- reactive({
-    req(input$key_file)
-    req(input$file)
+    req(input$key_file, input$file)
+  # Check extension of file  
     check_ext("key_file",input$key_file$name,"xlsx","Invalid file; Please select a .xlsx file")
-    # Check for required column names
-    column_names <-input$key_file$datapath %>% purrr::map(function(file_name)
-      as_tibble(openxlsx::read.xlsx(file_name, sheet = 2, colNames = T, rows = 1,cols = c(1:7)))) %>%
-      reduce(rbind) %>% names() %>% str_trim()
-    template_headers <- c("Date","Site","Block","Treatment","Replicate","FileNum")
-    check_header(column_names,template_headers)
-    input$key_file$datapath %>% purrr::map(function(file_name)
-      as_tibble(openxlsx::read.xlsx(file_name, sheet = 2, detectDates = T,cols = c(1:7)))) %>%
+  # Check for required column names
+    key_sheet <- find_sheet(input$key_file$datapath,header_check)
+  # Read in key data
+     input$key_file$datapath %>% purrr::map(function(file_name)
+      as_tibble(openxlsx::read.xlsx(file_name, sheet = key_sheet, detectDates = T,cols = c(1:7)))) %>%
       reduce(rbind) %>%
       mutate(across(where(is.character), str_trim)) %>%
       left_join(

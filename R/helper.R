@@ -192,10 +192,16 @@ check_ext <- function(input_id,in_file,f_ext,ERR_message) {
   shinyFeedback::feedbackWarning(input_id,!correct_ext,ERR_message)
   req(correct_ext, cancelOutput = TRUE)
 }
-# Check the excel header row for required column names
-check_header <- function(key_column_names,headers) {
-  correct_headers <- all(headers %in% key_column_names)
-  shinyFeedback::feedbackWarning("key_file",!correct_headers,"Check Excel file column names.")
-  if (!correct_headers) {showNotification(paste("Column names should match ",toString(headers)),duration = 15,type = "error")}
-  req(correct_headers, cancelOutput = TRUE)
+# Check the excel header row for required column name of "Fi
+find_sheet <- function(key_file,name_check) {
+  wb_sheets <- openxlsx::getSheetNames(key_file)
+  key_sheet <- NULL
+  for (i in wb_sheets) {
+    column_names <- openxlsx::read.xlsx(key_file,sheet = i,colNames = T,rows=1)
+    if (name_check %in% names(column_names)) {key_sheet <- i}
+  }
+  shinyFeedback::feedbackWarning("key_file",is.null(key_sheet),"Check Excel file column names.")
+  if (is.null(key_sheet)) {showNotification(paste("Column names should match ",toString(headers)),duration = 15,type = "error")}
+  req(key_sheet, cancelOutput = TRUE)
+return(key_sheet)
 }
