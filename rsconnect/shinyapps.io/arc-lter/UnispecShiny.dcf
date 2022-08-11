@@ -1,0 +1,13 @@
+name: UnispecShiny
+title: UnispecShiny
+username:
+account: arc-lter
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 6631244
+bundleId: 6091893
+url: https://arc-lter.shinyapps.io/UnispecShiny/
+when: 1657642433.36352
+lastSyncTime: 1657642433.36353
+asMultiple: FALSE
+asStatic: FALSE

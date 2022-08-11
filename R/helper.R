@@ -63,7 +63,7 @@ read_spu_file_metadata <- function(filepath,filename, info = "short") {
   
   # Truncated Filename - use as SCANID to join to other dataframes
   spu_filename <- unlist(str_split(filename, pattern = "/")) %>% last()
-  
+  FileNum <- str_extract(spu_filename, "\\d{5}") %>% as.numeric() # from 5 digits in filename
   # Metadata 
   metadata <- tibble(spu_filename, DateTime, FileNum, ScanType, Integration, NumberScans,Minimum_wavelength,Minimum_value, Maximum_wavelength, Maximum_value, Limits, Temperature, Battery, Aux, DarkscanID, Remarks)
   
