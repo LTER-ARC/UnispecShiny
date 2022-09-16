@@ -46,8 +46,10 @@ ui <- fluidPage(
                   accept = c(".xlsx")),
         uiOutput("keyfiles_loaded"),
         hr(),
-        uiOutput("selectfile"),
-        uiOutput("treatments") #Select for treatment to filter the list of spu files
+        uiOutput("selectsite"),
+        selectInput("selectfile","Select File", choices = NULL, size = 10,
+                       selectize = FALSE,multiple = FALSE), #Had to use head to get 1st element; leaving as NULL didn't work),
+        selectInput("treatments", "Treatments",choices = NULL,) #Select for treatment to filter the list of spu files
       ),
       mainPanel(
         uiOutput("tb")
@@ -67,45 +69,76 @@ server <- function(input, output, session) {
   
   # * Select input widget ----
   # with the list of file loaded input$file but filtered by files_trtment_choice
-  output$selectfile <- renderUI({
-   req(input$file, input$key_file, input$choice_input)
-    check_ext("file",input$file$name,"spu","Invalid file; Please select .spu files")
-    select_input <- as_tibble(
-      switch(input$choice_input,
-             All = {input$file %>% select(spu_filename=name)},
-             Spectra_maxed = {maxed_files()},
-             {keys() %>% subset(Treatment %in% input$choice_input)%>%
-                 select(spu_filename)}) %>%
-        replace_na(list(data.spu_filename ="No spu file!!! Check Key file."))
-    )#TO DO map site,blk to replaced NA
-    if(nrow(select_input) ==0) {select_input <- as.null()}
-    list(
-      helpText("Select a file for spectra plot"),
-      selectInput(
-        "Select",
-        "Select file",
-        choices = unique(select_input), 
-        selectize = F,
-        size = 10,
-        multiple = FALSE,
-        selected = head(select_input,1) #Had to use head to get 1st element; leaving as NULL didn't work
-      )
-    )
+  output$selectsite <- renderUI({
+    req(keys())
+    selectInput("selectsite","Sites",
+                choices = unique(keys()$Site),
+                multiple = FALSE)
   })
+   sites <- reactive({
+    req(input$selectsite)
+    filter(keys(), Site %in% input$selectsite)
+  })
+ #Update Treatments based on selected Site
+  observeEvent(input$selectsite, {
+     req(sites())
+     choices <- c("All","Spectra_maxed",unique(sites()$Treatment))
+     updateSelectInput(inputId = "treatments",choices = choices, selected ="All")
+   })
+
+   treatments <- reactive({
+     req(sites(),input$treatments)
+     filter(sites(), Treatment %in% input$treatments)
+   })
+ #update spu_filename based on slected site and treatments
+   observeEvent(treatments(), {
+     choices <-  switch(input$treatments,
+                        All = {sites() %>% select(spu_filename)},
+                        Spectra_maxed = {maxed_files()},
+                        {unique(treatments()$spu_filename)}
+                        )
+     updateSelectInput(inputId = "selectfile", choices = choices, selected = head(choices,1))
+   })
+  
+  # output$selectfile <- renderUI({
+  #  req(input$file, input$key_file, input$choice_input)
+  #   check_ext("file",input$file$name,"spu","Invalid file; Please select .spu files")
+  #   select_input <- as_tibble(
+  #     switch(input$choice_input,
+  #            All = {input$file %>% select(spu_filename=name)},
+  #            Spectra_maxed = {maxed_files()},
+  #            {keys() %>% subset(Treatment %in% input$choice_input)%>%
+  #                select(spu_filename)}) %>%
+  #       replace_na(list(data.spu_filename ="No spu file!!! Check Key file."))
+  #   )#TO DO map site,blk to replaced NA
+  #   if(nrow(select_input) ==0) {select_input <- as.null()}
+  #   list(
+  #     helpText("Select a file for spectra plot"),
+  #     selectInput(
+  #       "Select",
+  #       "Select file",
+  #       choices = unique(select_input), 
+  #       selectize = F,
+  #       size = 10,
+  #       multiple = FALSE,
+  #       selected = head(select_input,1) #Had to use head to get 1st element; leaving as NULL didn't work
+  #     )
+  #   )
+  # })
   # * Table to show key files uploaded ----
-  output$keyfiles_loaded <- renderUI({
-    req(input$key_file)
-    div(
-    renderTable(input$key_file%>% select(name)),
-    style = "font-size:80%")
-  })
+  # output$keyfiles_loaded <- renderUI({
+  #   req(input$key_file)
+  #   div(
+  #   renderTable(input$key_file%>% select(name)),
+  #   style = "font-size:80%")
+  # })
   # * Select box for treatments and maxed out files.----
-  output$treatments <- renderUI({
-    req(input$key_file)
-    selectInput("choice_input", "Treament",
-                choices= c("All","Spectra_maxed",as.vector(keys() %>% select(Treatment))),
-                selected = "All")
-  }) 
+  # output$treatments <- renderUI({
+  #   req(input$key_file)
+  #   selectInput("choice_input", "Treament",
+  #               choices= c("All","Spectra_maxed",as.vector(keys() %>% select(Treatment))),
+  #               selected = "All")
+  # }) 
   # Will need to work on using updateSelectInput since it may help with reactive diagram
   # observeEvent(input$choice_input,
   #              {updateSelectInput(session,
@@ -136,7 +169,7 @@ server <- function(input, output, session) {
   # and output a combined table if more then one file.  Using shinyFeedback
   # to warn about incorrect file selection
   keys <- reactive({
-    req(input$key_file, input$file)
+    req(input$key_file, input$file,spu_df())
   # Check extension of file  
     check_ext("key_file",input$key_file$name,"xlsx","Invalid file; Please select a .xlsx file")
   # Check for required column names
@@ -152,11 +185,14 @@ server <- function(input, output, session) {
           mutate(Site = toupper(str_extract(spu_filename, "^[:alnum:]{3,}"))) %>%
           mutate(FileNum = str_extract(spu_filename, "\\d{5}") %>% as.numeric()),
         by = c("Site", "FileNum")
-      )
+      ) %>%
+       filter(Date %in% spu_df()$Date)
   })
   # * Read the .spu data ---------------------------------------------------
   spu_df <- reactive({
     req(input$file)
+    id <- showNotification("Reading spu files' data...", duration = NULL, closeButton = FALSE)
+    on.exit(removeNotification(id), add = TRUE)
     # Read metadata text lines (9) from the spu files
     spu_filedata <- pmap_dfr(list(input$file$datapath,input$file$name), read_spu_file_metadata) %>%
     mutate(Site = toupper(str_extract(spu_filename, "^[:alnum:]{3,}"))) %>%
@@ -226,7 +262,7 @@ server <- function(input, output, session) {
     req(full_data())
     refdata<-full_data() %>%
     ## Get the spectra for reference files
-    filter(Treatment == "REF") %>%
+    filter(Treatment == "REF", Site == input$selectsite) %>%
     ### Unnest Spectra & calculate correction factor
     unnest(Spectra) %>%
     filter(Wavelength > 400, Wavelength < 1000) %>% # remove edge wavelengths, instrument unreliable at extremes
@@ -257,7 +293,7 @@ server <- function(input, output, session) {
   # * Get integration times of ref data for each site --------------------------
   ref_int_values <- reactive({ 
   full_data() %>%
-    filter((Treatment == "REF")) %>%
+    filter(Treatment == "REF", Site == input$selectsite) %>%
     select(Date,Site,Integration) %>%
     distinct()
   })
@@ -302,11 +338,11 @@ server <- function(input, output, session) {
 ##----Plot Spectra Tab ----------------------------------------------------
   
   #   This reactivate output contains the raw spectra in an x-y line plot format
-  observeEvent(input$Select,ignoreNULL = TRUE, {  # Only output plot if there is a file selected.
+  observeEvent(input$selectfile,ignoreNULL = TRUE, {  # Only output plot if there is a file selected.
   output$specplot <- renderPlot({
-    if(is.null(input$Select)) {return()}
+    if(is.null(input$selectfile)) {return()}
       ## read data
-    file_spu <- input$file$datapath[input$file$name==input$Select]
+    file_spu <- input$file$datapath[input$file$name==input$selectfile]
     df<-read.table(file=file_spu, 
                skip = 9,col.names = c("Wavelength", "ChB", "ChA"))   
       ## tidy
@@ -328,9 +364,9 @@ server <- function(input, output, session) {
  # Selected file key file information 
   output$key_selected <- renderTable({
     req(input$file,input$key_file)
-    if(is.null(input$Select)){return()}
-    input_file_num <- as.integer(str_extract(input$Select, "\\d{5}"))
-    input_site = toupper(str_extract(input$Select, "^[:alnum:]{3,}"))
+    if(is.null(input$selectfile)){return()}
+    input_file_num <- as.integer(str_extract(input$selectfile, "\\d{5}"))
+    input_site = toupper(str_extract(input$selectfile, "^[:alnum:]{3,}"))
     key_info <- keys() %>% dplyr::filter(FileNum == input_file_num & Site == input_site)
     validate(need(nrow(key_info) > 0, "No Key information found for this .spu file."))
     return(key_info)
@@ -339,9 +375,9 @@ server <- function(input, output, session) {
   # Output the file's first 9 rows of metadata
   output$metatable <- renderTable({ 
     req(input$file,input$key_file)
-    if(is.null(input$Select)){return()}
-    if(!(input$Select %in% input$file$name)) {return()}
-    read.table(file=input$file$datapath[input$file$name==input$Select], 
+    if(is.null(input$selectfile)){return()}
+    if(!(input$selectfile %in% input$file$name)) {return()}
+    read.table(file=input$file$datapath[input$file$name==input$selectfile], 
                col.names = "Instrument_Metadata_from_.spu_file", # first 9 rows of .spu file are metadata
                nrows=9) 
   })
