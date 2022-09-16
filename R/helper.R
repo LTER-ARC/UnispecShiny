@@ -154,9 +154,9 @@ calculate_indices <- function(spectra, band_defns, instrument = "MODIS", indices
     spread(color, Reflectance) %>% 
     
     ## INDEX DEFINITIONS
-    mutate(NDVI = (nir-red)/(nir+red),
-           EVI = 2.5*((nir-red)/(nir+6*red-7.5*blue + 1)),
-           EVI2 = 2.5*((nir-red)/(nir+2.4*red + 1))) %>% 
+    mutate(NDVI = (nir-red)/(nir+red)) %>%
+           # EVI = 2.5*((nir-red)/(nir+6*red-7.5*blue + 1)),
+           # EVI2 = 2.5*((nir-red)/(nir+2.4*red + 1))) %>% 
     select_at(indices) %>% 
     gather(Index, Value, everything()) %>% 
     
