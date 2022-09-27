@@ -2,7 +2,7 @@
 ## Required Packages
 
 packages <- c("knitr","rstudioapi","lubridate","purrr",
-                  "tidyverse","openxlsx","shiny","plotly")
+                  "tidyverse","openxlsx","shiny","plotly","data.table")
 
 # Install packages not yet installed
 installed_packages <- packages %in% rownames(installed.packages())
@@ -22,7 +22,7 @@ read_spu_file_metadata <- function(filepath,filename, info = "short") {
   # OUTPUT: dataframe with 15 columns on instrument status, scan settings, max/min value
   
   # Extract info from the file itself, reading metadata from first 9 lines. Create a dataframe
-  text <- read_lines(filepath, n_max=9)
+  text <- fread(filepath, sep = "", header = FALSE, nrows=9)
   
   # Line 1: Extract the file name in the spu file as a check. Some file names have spaces 
   spu_filename <- str_replace(text[1],".*[\\\\]([A-z0-9.]\\s*)","\\1") %>% # extract filename
@@ -45,7 +45,7 @@ read_spu_file_metadata <- function(filepath,filename, info = "short") {
   Limits <- str_extract(text[4], "\\d+.\\d.+\\d") 
   
   # Line 5: 
-  Temperature <- as.numeric(strsplit(strsplit(text[5], split = " ")[[1]][4], split="=")[[1]][2])
+  Temperature <- as.numeric(str_split(str_split(text[5], pattern = " ")[[1]][4], pattern = "=")[[1]][2])
   Battery <- str_extract(text[5], "BattV=\\d+.\\d+")
   Aux <- str_extract(text[5], "A\\d=.+\\d")
   
@@ -58,7 +58,7 @@ read_spu_file_metadata <- function(filepath,filename, info = "short") {
   Maximum_wavelength <- str_split(Maximum, boundary("word"))[[1]][1]
   Maximum_value <- str_split(Maximum, boundary("word"))[[1]][2]
   
-  Integration <- as.numeric(strsplit(text[8], split = " ")[[1]][3])
+  Integration <- as.numeric(str_split(text[8],pattern = " ")[[1]][3])
   NumberScans <- str_extract(text[9], "\\d+")
   
   # Truncated Filename - use as SCANID to join to other dataframes
@@ -84,7 +84,7 @@ read_spu_file_spectra <- function(filename) {
   # OUTPUT: dataframe of spectral data with 3 columns Wavelength, ChB, ChA
   
   # Read spectral intensity data into dataframe
-  data <- read.table(file = filename, skip = 9, col.names = c("Wavelength", "ChB", "ChA"))
+  data <- data.table::fread(file = filename, skip = 9, col.names = c("Wavelength", "ChB", "ChA"))
   
   #print(filename)
   
