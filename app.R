@@ -7,54 +7,82 @@
 #    http://shiny.rstudio.com/
 #
 
-library(shiny)
-library(tidyverse)
-library(DT)
+
+## Required Packages -----
+
+packages <- c("shiny","rstudioapi","tidyverse","lubridate",
+              "openxlsx","plotly","data.table", "DT")
+
+# Install packages not yet installed
+installed_packages <- packages %in% rownames(installed.packages())
+if (any(installed_packages == FALSE)) {
+  install.packages(packages[!installed_packages])
+}
+# Packages loading
+invisible(lapply(packages, library, character.only = TRUE))
 
 
-# Define UI for application that ----
+# Define UI for application ----
+
 ui <- fluidPage(
-    shinyFeedback::useShinyFeedback(),
-    tags$head(
-      tags$style(HTML("
+  shinyFeedback::useShinyFeedback(),
+  tags$head(tags$style(
+    HTML(
+      "
       .shiny-output-error-validation {
         color: #ff0000;
         font-weight: bold;
       }
-    "))
-    ),
-    tags$head(
-      tags$style(
-        HTML(
-        ".shiny-notification {
+    "
+    )
+  )),
+  tags$head(tags$style(
+    HTML(
+      ".shiny-notification {
              position:fixed;
              top: calc(50%);
              left: calc(50%);
-             }
-             "
-        )
-      )
-    ),
-    titlePanel("Unispec QAQC"),
-    sidebarLayout(
-      sidebarPanel(
-        fileInput("file","Upload .spu files", multiple = TRUE,
-                  accept = c(".spu")), 
-        # Note input$file is a data frame (name, size, and temporary file path of the files uploaded)
-        helpText("Default max. file size is 5MB"),
-        fileInput("key_file","Upload Field Key Excel files", multiple = TRUE,
-                  accept = c(".xlsx")),
-        uiOutput("keyfiles_loaded"),
-        hr(),
-        uiOutput("selectsite"),
-        selectInput("selectfile","Select File", choices = NULL, size = 10,
-                       selectize = FALSE,multiple = FALSE), #Had to use head to get 1st element; leaving as NULL didn't work),
-        selectInput("treatments", "Treatments",choices = NULL,) #Select for treatment to filter the list of spu files
-      ),
-      mainPanel(
-        uiOutput("tb")
-      )
+             }"
     )
+  )),
+  navbarPage(
+    "Arctic LTER Spectral Reflectance Data",
+    tabPanel("1.Unispec QAQC ",
+             sidebarLayout(
+               sidebarPanel(
+                 helpText("Select Unispec .spu files"),
+                 fileInput(
+                   "spu_file",
+                   "Upload .spu files",
+                   multiple = TRUE,
+                   accept = c(".spu")
+                 ),
+                 # Note input$spu_file is a data frame: name, size, and datapath(includes path and file name) .
+                 helpText("Default max. file size is 5MB"),
+                 fileInput(
+                   "key_file",
+                   "Upload Field Key Excel files",
+                   multiple = TRUE,
+                   accept = c(".xlsx")
+                 ),
+                 uiOutput("keyfiles_loaded"),
+                 hr(),
+                 uiOutput("selectsite"),
+                 selectInput(
+                   "selectfile",
+                   "Select File",
+                   choices = NULL,
+                   size = 10,
+                   selectize = FALSE,
+                   multiple = FALSE
+                 ),
+                 #Had to use head to get 1st element; leaving as NULL didn't work),
+                 selectInput("treatments", "Treatments", choices = NULL, ) #Select for treatment to filter the list of spu files
+               ),
+               
+               mainPanel(uiOutput("tb"))
+             ))
+  )
 )
 
 # Define server logic ----
@@ -68,7 +96,7 @@ server <- function(input, output, session) {
 ##--------Sidebar additional UIs ---------------------------------------------
   
   # * Select input widget ----
-  # with the list of file loaded input$file but filtered by files_trtment_choice
+  # with the list of file loaded input$spu_file but filtered by files_trtment_choice
   output$selectsite <- renderUI({
     req(keys())
     selectInput("selectsite","Sites",
@@ -94,82 +122,19 @@ server <- function(input, output, session) {
    observeEvent(treatments(), {
      choices <-  switch(input$treatments,
                         All = {sites() %>% select(spu_filename)},
-                        Spectra_maxed = {maxed_files()},
+                        Spectra_maxed = {maxed_files()$spu_filename},
                         {unique(treatments()$spu_filename)}
                         )
      updateSelectInput(inputId = "selectfile", choices = choices, selected = head(choices,1))
    })
-  
-  # output$selectfile <- renderUI({
-  #  req(input$file, input$key_file, input$choice_input)
-  #   check_ext("file",input$file$name,"spu","Invalid file; Please select .spu files")
-  #   select_input <- as_tibble(
-  #     switch(input$choice_input,
-  #            All = {input$file %>% select(spu_filename=name)},
-  #            Spectra_maxed = {maxed_files()},
-  #            {keys() %>% subset(Treatment %in% input$choice_input)%>%
-  #                select(spu_filename)}) %>%
-  #       replace_na(list(data.spu_filename ="No spu file!!! Check Key file."))
-  #   )#TO DO map site,blk to replaced NA
-  #   if(nrow(select_input) ==0) {select_input <- as.null()}
-  #   list(
-  #     helpText("Select a file for spectra plot"),
-  #     selectInput(
-  #       "Select",
-  #       "Select file",
-  #       choices = unique(select_input), 
-  #       selectize = F,
-  #       size = 10,
-  #       multiple = FALSE,
-  #       selected = head(select_input,1) #Had to use head to get 1st element; leaving as NULL didn't work
-  #     )
-  #   )
-  # })
-  # * Table to show key files uploaded ----
-  # output$keyfiles_loaded <- renderUI({
-  #   req(input$key_file)
-  #   div(
-  #   renderTable(input$key_file%>% select(name)),
-  #   style = "font-size:80%")
-  # })
-  # * Select box for treatments and maxed out files.----
-  # output$treatments <- renderUI({
-  #   req(input$key_file)
-  #   selectInput("choice_input", "Treament",
-  #               choices= c("All","Spectra_maxed",as.vector(keys() %>% select(Treatment))),
-  #               selected = "All")
-  # }) 
-  # Will need to work on using updateSelectInput since it may help with reactive diagram
-  # observeEvent(input$choice_input,
-  #              {updateSelectInput(session,
-  #                                 inputId="Select",
-  #                                 choices=files_trtment_choice(),
-  #                                 selected = files_trtment_choice()[1])
-  #              }
-  # )
-  # observeEvent(input$choice_input,{
-  #   files_trtment_choice <- reactive  ({
-  # # req(input$key_file)
-  #  # if(is.null(input$choice_input)){return()}
-  #   select_input <- as_tibble(
-  #     switch(input$choice_input,
-  #         All = {input$file %>% select(spu_filename=name)},
-  #         Spectra_maxed = {maxed_files()},
-  #         {keys() %>% subset(Treatment %in% input$choice_input)%>%
-  #             select(spu_filename)}) %>%
-  #        replace_na(list(data.spu_filename ="No spu file!!! Check Key file."))
-  #     )#TO DO map site,blk to replaced NA
-  #   return(select_input)
-  #   })
-  #   })
- #__________________________________________________________________________
+  #__________________________________________________________________________
 #----Reactive outputs ----
   
   # * Read in the Excel key files ---------------------------------------
   # and output a combined table if more then one file.  Using shinyFeedback
   # to warn about incorrect file selection
   keys <- reactive({
-    req(input$key_file, input$file,spu_df())
+    req(input$key_file, input$spu_file,spu_df())
   # Check extension of file  
     check_ext("key_file",input$key_file$name,"xlsx","Invalid file; Please select a .xlsx file")
   # Check for required column names
@@ -180,23 +145,24 @@ server <- function(input, output, session) {
       reduce(rbind) %>%
       mutate(across(where(is.character), str_trim)) %>%
       left_join(
-        input$file %>% 
+        input$spu_file %>% 
           select(spu_filename = name) %>%
           mutate(Site = toupper(str_extract(spu_filename, "^[:alnum:]{3,}"))) %>%
           mutate(FileNum = str_extract(spu_filename, "\\d{5}") %>% as.numeric()),
         by = c("Site", "FileNum")
       ) %>%
-       filter(Date %in% spu_df()$Date)
+       filter(Date %in% spu_df()$Date) %>%
+       arrange(Site, spu_filename)
   })
   # * Read the .spu data ---------------------------------------------------
   spu_df <- reactive({
-    req(input$file)
+    req(input$spu_file)
     id <- showNotification("Reading spu files' data...", duration = NULL, closeButton = FALSE)
     on.exit(removeNotification(id), add = TRUE)
     # Read metadata text lines (9) from the spu files
-    spu_filedata <- pmap_dfr(list(input$file$datapath,input$file$name), read_spu_file_metadata) %>%
+    spu_filedata <- pmap_dfr(list(input$spu_file$datapath,input$spu_file$name), read_spu_file_metadata) %>%
     mutate(Site = toupper(str_extract(spu_filename, "^[:alnum:]{3,}"))) %>%
-    mutate(Spectra=map(input$file$datapath, function(x) read_spu_file_spectra(x))) %>% 
+    mutate(Spectra=map(input$spu_file$datapath, function(x) read_spu_file_spectra(x))) %>% 
     mutate(Date = date(DateTime)) %>%
     relocate(Date, .after = DateTime)
     return(spu_filedata)
@@ -225,6 +191,7 @@ server <- function(input, output, session) {
     
     req(full_data())
     M_data <- full_data() %>% 
+      filter(Site %in% input$selectsite) %>%
       filter(is.na(spu_filename) | 
                is.na(Site) |
                # Block with NA's should always be REFS or EXTRA 
@@ -240,20 +207,35 @@ server <- function(input, output, session) {
   
  # * Table of checks ------------------------------------------------------
   checks_table<- reactive({
-    spu_sites <-str_c(str_replace_na(unique( spu_df()$Site)), collapse = ",")
+    
+    spu_selected_site <-spu_df() %>% filter(Site %in% input$selectsite)
+    spu_sites <- str_c(str_replace_na(unique(spu_selected_site$Site)), collapse = ",")
     key_sites <- str_c(str_replace_na(unique(keys()$Site)), collapse = ",")
-    file_check <- paste("Does number of .spu files -", nrow(spu_df()), ", match what's entered in key file -", nrow(keys()),"?")
-    site_check <- paste("Sites from names of spu files:", spu_sites, "should match sites in key file(s):", key_sites)
-    maxedspectra <- paste("Maxed out spectra",maxed_files())
-    txt_s <- datatable(tibble(Checks = c(site_check,file_check,maxedspectra)),options = list(dom = 't'))
+    file_check <- paste("Does number of .spu files for selected site -", nrow(spu_selected_site),
+                        ", match what's entered in key file -", 
+                        nrow(filter(keys(), keys()$Site %in% input$selectsite)),"?")
+    site_check <- paste("Site used in spu files' names,", spu_sites, ", should match site in key file:", input$selectsite)
+    maxedspectra <- if(nrow(maxed_files()) == 0) #{
+      paste("No maxed out specra.")
+   # }else{
+    #  paste("Maxed out spectra",toString(maxed_files()$spu_filename),sep = ": ")}
+  # #  maxedspectra_OK <- maxed_files() %>% 
+  #                filter(NDVI_OK)%>%
+  #                 select(spu_filename)
+    maxed_dt <- datatable(maxed_files(), caption = "<H1>Maxed out spu files. </H1>")
+    txt_s <- datatable(tibble(Checks = c(site_check,file_check
+                                         )),
+                       options = list(dom = 't'))
     return(txt_s)  
   }) 
   
   # * Identify any files that aren't listed in the field key--------------------
   files_not_in_key <- reactive({
     data.frame(
-     spuFiles_Not_in_Keys = anti_join(spu_df(), keys(),by = c("Date", "FileNum", "Site"))%>%
-              pull(spu_filename)
+     spuFiles_Not_in_Keys = anti_join(spu_df(), keys(),
+                                      by = c("Date", "FileNum", "Site"))%>%
+      filter(Site %in% input$selectsite) %>%
+      pull(spu_filename)
     )
   })
   
@@ -286,9 +268,13 @@ server <- function(input, output, session) {
    req(full_data()) #,all(!is.na(full_data()$spu_filename)))
    full_data() %>% 
     unnest(Spectra) %>% 
-    filter(ChA > 65000 | ChB > 65000) %>% 
-    select(spu_filename) %>%
-    unique() 
+    filter(ChA > 65000 | ChB > 65000, Site %in% input$selectsite) %>% 
+    group_by(spu_filename)%>%
+    mutate(NDVI_OK = all(Wavelength < 600)) %>%
+    select(spu_filename, NDVI_OK) %>%
+    unique() %>%
+    ungroup() %>% 
+    {if(nrow(.) == 0) add_row(., spu_filename = "No maxed out specra.") else . }
   })
   # * Get integration times of ref data for each site --------------------------
   ref_int_values <- reactive({ 
@@ -342,7 +328,7 @@ server <- function(input, output, session) {
   output$specplot <- renderPlot({
     if(is.null(input$selectfile)) {return()}
       ## read data
-    file_spu <- input$file$datapath[input$file$name==input$selectfile]
+    file_spu <- input$spu_file$datapath[input$spu_file$name==input$selectfile]
     df<-read.table(file=file_spu, 
                skip = 9,col.names = c("Wavelength", "ChB", "ChA"))   
       ## tidy
@@ -363,7 +349,7 @@ server <- function(input, output, session) {
  # Tables below the plots
  # Selected file key file information 
   output$key_selected <- renderTable({
-    req(input$file,input$key_file)
+    req(input$spu_file,input$key_file)
     if(is.null(input$selectfile)){return()}
     input_file_num <- as.integer(str_extract(input$selectfile, "\\d{5}"))
     input_site = toupper(str_extract(input$selectfile, "^[:alnum:]{3,}"))
@@ -374,10 +360,10 @@ server <- function(input, output, session) {
   
   # Output the file's first 9 rows of metadata
   output$metatable <- renderTable({ 
-    req(input$file,input$key_file)
+    req(input$spu_file,input$key_file)
     if(is.null(input$selectfile)){return()}
-    if(!(input$selectfile %in% input$file$name)) {return()}
-    read.table(file=input$file$datapath[input$file$name==input$selectfile], 
+    if(!(input$selectfile %in% input$spu_file$name)) {return()}
+    read.table(file=input$spu_file$datapath[input$spu_file$name==input$selectfile], 
                col.names = "Instrument_Metadata_from_.spu_file", # first 9 rows of .spu file are metadata
                nrows=9) 
   })
@@ -412,6 +398,9 @@ server <- function(input, output, session) {
     if(nrow(files_not_in_key())<1){return()}
     files_not_in_key()
     })
+  output$maxedfiles <- DT::renderDataTable({
+    datatable(maxed_files(), caption = "Maxed out spu files")
+  })
     
 ##--- Plot References Tab----------------------------------------
   
@@ -485,7 +474,7 @@ server <- function(input, output, session) {
 # generate the tabsets when the file is loaded. 
 # Until the file is loaded, app will not show the tabset.
   output$tb <- renderUI({
-    req(input$file, input$key_file)
+    req(input$spu_file, input$key_file)
     tabsetPanel(
       
         tabPanel("Spectra Plot", plotOutput("specplot"),
@@ -503,6 +492,7 @@ server <- function(input, output, session) {
                 div(DT::dataTableOutput("missing_data"),
                 DT::dataTableOutput("not_in_key"),
                 DT::dataTableOutput("checks_table"),
+                DT::dataTableOutput("maxedfiles"),
                 style = "font-size:80%")
                 ),
         tabPanel("References Plots", plotlyOutput("ref_plot1"),
