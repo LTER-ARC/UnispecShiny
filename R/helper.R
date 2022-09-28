@@ -2,7 +2,7 @@
 ## Required Packages
 
 packages <- c("knitr","rstudioapi","lubridate","purrr",
-                  "tidyverse","openxlsx","shiny","plotly","data.table")
+                  "tidyverse","openxlsx","shiny","plotly","data.table","DT")
 
 # Install packages not yet installed
 installed_packages <- packages %in% rownames(installed.packages())
