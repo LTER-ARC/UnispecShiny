@@ -12,6 +12,7 @@
 
 packages <- c("shiny","rstudioapi","tidyverse","lubridate",
               "openxlsx","plotly","data.table", "DT")
+source("R/helper.R",local = TRUE)
 
 # Install packages not yet installed
 installed_packages <- packages %in% rownames(installed.packages())
@@ -21,19 +22,24 @@ if (any(installed_packages == FALSE)) {
 # Packages loading
 invisible(lapply(packages, library, character.only = TRUE))
 
+# ---------------------------------------------------------------------------------
+# Before lunching the shiny app, read in data from past years and any newer 
+#   index.rds files. Note: Past data have been cleaned and sites standardized
+#  These data objects are scoped across all sessions
+
+past_indices_data <- readRDS("data/indices_2014-2021.rds")
 
 # Define UI for application ----
 
 ui <- fluidPage(
+  
   shinyFeedback::useShinyFeedback(),
   tags$head(tags$style(
     HTML(
-      "
-      .shiny-output-error-validation {
+      ".shiny-output-error-validation {
         color: #ff0000;
         font-weight: bold;
-      }
-    "
+      }"
     )
   )),
   tags$head(tags$style(
@@ -67,8 +73,12 @@ ui <- fluidPage(
                  ),
                  uiOutput("keyfiles_loaded"),
                  hr(),
-                 uiOutput("selectsite"),
-                 selectInput(
+                selectInput(
+                   "selectsite",
+                   "Sites",
+                    choices = NULL,
+                    multiple = FALSE),
+                selectInput(
                    "selectfile",
                    "Select File",
                    choices = NULL,
@@ -76,11 +86,22 @@ ui <- fluidPage(
                    selectize = FALSE,
                    multiple = FALSE
                  ),
-                 #Had to use head to get 1st element; leaving as NULL didn't work),
-                 selectInput("treatments", "Treatments", choices = NULL, ) #Select for treatment to filter the list of spu files
+                 selectInput(
+                   "treatments",
+                   "Treatments",
+                   choices = NULL, ) #Select for treatment to filter the list of spu files
                ),
                
                mainPanel(uiOutput("tb"))
+             )),
+    tabPanel("2. Files",
+             sidebarLayout(
+               sidebarPanel(
+                 hr(),
+                 #uiOutput("selectsite")
+                 # selectInput("treatments", "Treatments", choices = NULL, )
+               ),
+               mainPanel(uiOutput("files_tb"))
              ))
   )
 )
@@ -95,35 +116,32 @@ server <- function(input, output, session) {
   
 ##--------Sidebar additional UIs ---------------------------------------------
   
-  # * Select input widget ----
-  # with the list of file loaded input$spu_file but filtered by files_trtment_choice
-  output$selectsite <- renderUI({
-    req(keys())
-    selectInput("selectsite","Sites",
-                choices = unique(keys()$Site),
-                multiple = FALSE)
+  # Update Select input widgets ----
+  # 
+ 
+  observeEvent(keys(),{
+    updateSelectInput(session, inputId = "selectsite",choices = unique(keys()$Site))
   })
-   sites <- reactive({
+  
+  #Update Treatments based on selected Site
+  site_subset <- reactive({
     req(input$selectsite)
     filter(keys(), Site %in% input$selectsite)
   })
- #Update Treatments based on selected Site
   observeEvent(input$selectsite, {
-     req(sites())
-     choices <- c("All","Spectra_maxed",unique(sites()$Treatment))
+     req(site_subset())
+     choices <- c("All","Spectra_maxed",unique(site_subset()$Treatment))
      updateSelectInput(inputId = "treatments",choices = choices, selected ="All")
    })
 
-   treatments <- reactive({
-     req(sites(),input$treatments)
-     filter(sites(), Treatment %in% input$treatments)
-   })
- #update spu_filename based on slected site and treatments
-   observeEvent(treatments(), {
+ #update spu_filename based on selected site and treatments
+ #Had to use head to get 1st element; leaving as NULL didn't work),
+   observeEvent(input$treatments, {
+     
      choices <-  switch(input$treatments,
-                        All = {sites() %>% select(spu_filename)},
+                        All = {site_subset() %>% select(spu_filename)},
                         Spectra_maxed = {maxed_files()$spu_filename},
-                        {unique(treatments()$spu_filename)}
+                        {unique(filter(site_subset(), Treatment %in% input$treatments)$spu_filename)}
                         )
      updateSelectInput(inputId = "selectfile", choices = choices, selected = head(choices,1))
    })
@@ -216,15 +234,9 @@ server <- function(input, output, session) {
                         nrow(filter(keys(), keys()$Site %in% input$selectsite)),"?")
     site_check <- paste("Site used in spu files' names,", spu_sites, ", should match site in key file:", input$selectsite)
     maxedspectra <- if(nrow(maxed_files()) == 0) #{
-      paste("No maxed out specra.")
-   # }else{
-    #  paste("Maxed out spectra",toString(maxed_files()$spu_filename),sep = ": ")}
-  # #  maxedspectra_OK <- maxed_files() %>% 
-  #                filter(NDVI_OK)%>%
-  #                 select(spu_filename)
-    maxed_dt <- datatable(maxed_files(), caption = "<H1>Maxed out spu files. </H1>")
-    txt_s <- datatable(tibble(Checks = c(site_check,file_check
-                                         )),
+     paste("No maxed out specra.")
+     maxed_dt <- datatable(maxed_files(), caption = "Maxed out spu files.")
+    txt_s <- datatable(tibble(Checks = c(site_check,file_check)),
                        options = list(dom = 't'))
     return(txt_s)  
   }) 
@@ -470,7 +482,7 @@ server <- function(input, output, session) {
       write_rds(index_data(), file)
     }
   )
-# ---- MainPanel tabset renderUI code-------------------------
+# ---- QAQC MainPanel tabset renderUI code-------------------------
 # generate the tabsets when the file is loaded. 
 # Until the file is loaded, app will not show the tabset.
   output$tb <- renderUI({
@@ -483,10 +495,6 @@ server <- function(input, output, session) {
                    hr(),
                    tableOutput("metatable"),
                    style = "font-size:80%")),
-        tabPanel("Field Keys",DT::dataTableOutput("key_table")
-                 ),
-        tabPanel("All data combined",DT::dataTableOutput("all_data")
-                 ),
         tabPanel("Checks",h5("Checks on key and .spu files "),
                 h6("Review the below tables for missing or incorrect information and for maxed out spectra."),
                 div(DT::dataTableOutput("missing_data"),
@@ -503,6 +511,16 @@ server <- function(input, output, session) {
                  downloadButton("download_indices_data", "Save indices as .rds")
                  )
         )
+  })
+  
+  output$files_tb <- renderUI({
+    req(input$spu_file, input$key_file)
+    tabsetPanel(
+      tabPanel("Field Keys",DT::dataTableOutput("key_table")
+      ),
+      tabPanel("All data combined",DT::dataTableOutput("all_data")
+      )
+    )
   })
 }
 
