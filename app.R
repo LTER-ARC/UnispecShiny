@@ -12,8 +12,8 @@
 
 packages <- c("shiny","rstudioapi","tidyverse","lubridate",
               "openxlsx","plotly","data.table", "DT")
-source("R/helper.R",local = TRUE)
-
+#source("R/helper.R",local = TRUE)
+library(shinyjs)
 # Install packages not yet installed
 installed_packages <- packages %in% rownames(installed.packages())
 if (any(installed_packages == FALSE)) {
@@ -32,7 +32,7 @@ past_indices_data <- readRDS("data/indices_2014-2021.rds")
 # Define UI for application ----
 
 ui <- fluidPage(
-  
+  shinyjs::useShinyjs(),
   shinyFeedback::useShinyFeedback(),
   tags$head(tags$style(
     HTML(
@@ -92,16 +92,21 @@ ui <- fluidPage(
                    choices = NULL, ) #Select for treatment to filter the list of spu files
                ),
                
-               mainPanel(uiOutput("tb"))
+               mainPanel(uiOutput("QAQC_tb"))
              )),
-    tabPanel("2. Files",
+    tabPanel("2. Compare to past years",
              sidebarLayout(
                sidebarPanel(
+                 # Input: Checkboxes ----
+                 checkboxGroupInput("choice_site", "Site",
+                                    choices= NULL),
+                 checkboxGroupInput("choice_treatment", "Treatment",
+                                    choices= NULL),
+                 checkboxGroupInput("choice_block", "Block",
+                                    choices= NULL),
                  hr(),
-                 #uiOutput("selectsite")
-                 # selectInput("treatments", "Treatments", choices = NULL, )
                ),
-               mainPanel(uiOutput("files_tb"))
+               mainPanel(uiOutput("past_tb"))
              ))
   )
 )
@@ -136,7 +141,7 @@ server <- function(input, output, session) {
 
  #update spu_filename based on selected site and treatments
  #Had to use head to get 1st element; leaving as NULL didn't work),
-   observeEvent(input$treatments, {
+   observeEvent(c(input$selectsite, input$treatments), {
      
      choices <-  switch(input$treatments,
                         All = {site_subset() %>% select(spu_filename)},
@@ -146,6 +151,7 @@ server <- function(input, output, session) {
      updateSelectInput(inputId = "selectfile", choices = choices, selected = head(choices,1))
    })
   #__________________________________________________________________________
+   
 #----Reactive outputs ----
   
   # * Read in the Excel key files ---------------------------------------
@@ -256,7 +262,7 @@ server <- function(input, output, session) {
     req(full_data())
     refdata<-full_data() %>%
     ## Get the spectra for reference files
-    filter(Treatment == "REF", Site == input$selectsite) %>%
+    filter(Treatment == "REF") %>%
     ### Unnest Spectra & calculate correction factor
     unnest(Spectra) %>%
     filter(Wavelength > 400, Wavelength < 1000) %>% # remove edge wavelengths, instrument unreliable at extremes
@@ -268,6 +274,10 @@ server <- function(input, output, session) {
       any(is.na(refdata$correction_factor)),
       text = "A reference file has a NA for correction factor.")
     req(!any(is.na(refdata$correction_factor)),cancelOutput = TRUE)
+    
+    # ref_data() %>% 
+    #   summarize(correction_factor = mean(ChA/ChB), 
+    #             ref_filenames = str_c(spu_filename,collapse = ", "))
     return(refdata)
     })
   correction_factors <- reactive ({
@@ -291,7 +301,8 @@ server <- function(input, output, session) {
   # * Get integration times of ref data for each site --------------------------
   ref_int_values <- reactive({ 
   full_data() %>%
-    filter(Treatment == "REF", Site == input$selectsite) %>%
+    filter(Treatment == "REF") %>%
+    group_by(Date, Site) %>% 
     select(Date,Site,Integration) %>%
     distinct()
   })
@@ -299,10 +310,11 @@ server <- function(input, output, session) {
   # to the nearest data scan integration time
   data_corrected_ref_integration <- reactive ({
     req(full_data, input$key_file)
-    inner_join(full_data(), ref_int_values(), by = c("Date","Site"),suffix = c(".data",".ref")) %>%
+    full_join(full_data(), ref_int_values(), by = c("Date","Site"),suffix = c(".data",".ref")) %>%
     group_by(Date,Site,FileNum) %>%
-     filter(!Treatment %in% c("DARK", "REF")) %>%
-    mutate(Integration.ref = Integration.ref[which.min(abs(Integration.data-Integration.ref))]) %>%
+     #filter(!Treatment %in% c("DARK", "REF")) %>%
+    mutate(Integration.ref = ifelse(is.na(Integration.ref),Integration.ref, 
+                                    Integration.ref[which.min(abs(Integration.data-Integration.ref))])) %>%
     distinct(FileNum, .keep_all = TRUE) %>%
     unnest(Spectra) %>% 
     filter(Wavelength > 400, Wavelength < 1000) %>%
@@ -329,7 +341,7 @@ server <- function(input, output, session) {
     nest(Spectra = c(Wavelength, Reflectance)) %>%
   # Calculate NDVI
     mutate(Indices = map(Spectra, function(x) calculate_indices(x, 
-                band_defns = band_defns, instrument = "MODIS", indices = c("NDVI", "EVI", "EVI2")))
+                band_defns = band_defns, instrument = "MODIS", indices = "NDVI"))
            )
     })
   
@@ -338,17 +350,12 @@ server <- function(input, output, session) {
   #   This reactivate output contains the raw spectra in an x-y line plot format
   observeEvent(input$selectfile,ignoreNULL = TRUE, {  # Only output plot if there is a file selected.
   output$specplot <- renderPlot({
-    if(is.null(input$selectfile)) {return()}
-      ## read data
-    file_spu <- input$spu_file$datapath[input$spu_file$name==input$selectfile]
-    df<-read.table(file=file_spu, 
-               skip = 9,col.names = c("Wavelength", "ChB", "ChA"))   
-      ## tidy
-    df %>%
-      mutate(Reflectance = ChB/ChA) %>% 
-      filter(Wavelength > 400, Wavelength < 1000) %>% 
+    if(is.null(input$selectfile) | !str_detect(input$selectfile,".spu")) {return()}
+
+    data_corrected_ref_integration() %>%
+      filter(spu_filename == input$selectfile) %>%  
       tidyr::gather(key = Channel, value = Intensity, ChB, ChA) %>%
-      tidyr::gather(key = ref_part, value = Reflectance_Intensity, Intensity, Reflectance) %>% 
+      tidyr::gather(key = ref_part, value = Reflectance_Intensity, Intensity, raw_reflectance) %>% 
       ## viz
       ggplot(mapping = aes(x = Wavelength, y = Reflectance_Intensity)) +
       geom_line(aes(color=Channel)) +
@@ -363,10 +370,11 @@ server <- function(input, output, session) {
   output$key_selected <- renderTable({
     req(input$spu_file,input$key_file)
     if(is.null(input$selectfile)){return()}
+    
     input_file_num <- as.integer(str_extract(input$selectfile, "\\d{5}"))
     input_site = toupper(str_extract(input$selectfile, "^[:alnum:]{3,}"))
     key_info <- keys() %>% dplyr::filter(FileNum == input_file_num & Site == input_site)
-    validate(need(nrow(key_info) > 0, "No Key information found for this .spu file."))
+    validate(need(nrow(key_info) > 0, "No Key information found."))
     return(key_info)
   })
   
@@ -375,23 +383,33 @@ server <- function(input, output, session) {
     req(input$spu_file,input$key_file)
     if(is.null(input$selectfile)){return()}
     if(!(input$selectfile %in% input$spu_file$name)) {return()}
+    
     read.table(file=input$spu_file$datapath[input$spu_file$name==input$selectfile], 
                col.names = "Instrument_Metadata_from_.spu_file", # first 9 rows of .spu file are metadata
                nrows=9) 
   })
   }) #Closing of observeEvent
   
-##---- Key file table  Tab ---------------------------------------------------
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      ##---- Key file table  Tab ---------------------------------------------------
 
-  # Output a table of all the information in the key file(s) 
+  # Output tables ----- 
+  
   output$key_table <- DT::renderDataTable({
     req(input$key_file)
     keys()
     })
-## ------Combined Key and spu data Tab
+## Combined Key and spu data Tab
   output$all_data <- DT::renderDataTable({
     req(input$key_file)
     full_data() %>% select(-Spectra)
+    })
+  
+  output$indices <- DT::renderDataTable({
+    req(input$key_file)
+    index_data() %>% 
+      select(-Spectra,-ref_filenames, 
+             -Integration.data, -Integration.ref) %>%
+      unnest(Indices)
   })
   
 ## ------Checks Tab ------------------------------------------
@@ -418,7 +436,8 @@ server <- function(input, output, session) {
   
   output$ref_plot1 <- renderPlotly({
     plotly::ggplotly(
-       ggplot(ref_data(),aes(x = Wavelength, y = correction_factor,
+      ref_data() %>% filter(Site == input$selectsite) %>% 
+       ggplot(mapping = aes(x = Wavelength, y = correction_factor,
                                        group_by = spu_filename)) + 
          theme(legend.position="left") + 
          geom_line(aes(color=factor(FileNum))) +
@@ -434,7 +453,8 @@ server <- function(input, output, session) {
   
   output$ref_plot2 <- renderPlotly({
     plotly::ggplotly( 
-    ggplot(ref_data(),
+      ref_data() %>% filter(Site == input$selectsite) %>%  
+    ggplot(mapping = 
          aes(x = Wavelength, 
              y = correction_factor,
              group_by = spu_filename)) + 
@@ -484,8 +504,16 @@ server <- function(input, output, session) {
   )
 # ---- QAQC MainPanel tabset renderUI code-------------------------
 # generate the tabsets when the file is loaded. 
-# Until the file is loaded, app will not show the tabset.
-  output$tb <- renderUI({
+# Hide selectinputs on tabs where they are not relative.
+  observeEvent(input$tabselected, {
+    if (input$tabselected =="Checks" | input$tabselected == "References Plots") {
+      hideElement("selectfile")
+      hideElement("treatments")
+    } else {
+      showElement("selectfile")
+      showElement("treatments")
+    }})
+  output$QAQC_tb <- renderUI({
     req(input$spu_file, input$key_file)
     tabsetPanel(
       
@@ -494,22 +522,39 @@ server <- function(input, output, session) {
                    tableOutput("key_selected"),
                    hr(),
                    tableOutput("metatable"),
-                   style = "font-size:80%")),
+                   style = "font-size:80%"),
+                 id = "spec_plot"
+                 ),
         tabPanel("Checks",h5("Checks on key and .spu files "),
                 h6("Review the below tables for missing or incorrect information and for maxed out spectra."),
                 div(DT::dataTableOutput("missing_data"),
                 DT::dataTableOutput("not_in_key"),
                 DT::dataTableOutput("checks_table"),
                 DT::dataTableOutput("maxedfiles"),
-                style = "font-size:80%")
+                style = "font-size:80%"),
+                id = "checks"
                 ),
         tabPanel("References Plots", plotlyOutput("ref_plot1"),
-                 plotlyOutput("ref_plot2")
+                 plotlyOutput("ref_plot2"),
+                 id = "ref_plot"
                  ),
-        tabPanel("Save Files", downloadButton("download_corrected_data", "Save corrected spectra as .rds"),
-                 downloadButton("download_full_data", "Save uncorrected spectra as .rds"),
-                 downloadButton("download_indices_data", "Save indices as .rds")
+        tabPanel("Files", 
+                 tabsetPanel(
+                   tabPanel("Field Keys",DT::dataTableOutput("key_table")
+                   ),
+                   tabPanel("All data combined",
+                            DT::dataTableOutput("all_data"),
+                            downloadButton("download_corrected_data", "Save corrected spectra as .rds")
+                   ),
+                   tabPanel("NDVI",
+                            DT::dataTableOutput("indices"),
+                            downloadButton("download_indices_data", "Save indices as .rds"))
                  )
+                 # downloadButton("download_corrected_data", "Save corrected spectra as .rds"),
+                 # downloadButton("download_full_data", "Save uncorrected spectra as .rds"),
+                 # downloadButton("download_indices_data", "Save indices as .rds")
+                 ),
+        id ="tabselected"
         )
   })
   
@@ -518,9 +563,14 @@ server <- function(input, output, session) {
     tabsetPanel(
       tabPanel("Field Keys",DT::dataTableOutput("key_table")
       ),
-      tabPanel("All data combined",DT::dataTableOutput("all_data")
+      tabPanel("All data combined",
+               downloadButton("download_corrected_data", "Save corrected spectra as .rds"),
+               DT::dataTableOutput("all_data")
       )
     )
+  })
+  output$past_tb <- renderUI({
+    
   })
 }
 
