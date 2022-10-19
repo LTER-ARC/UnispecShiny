@@ -168,6 +168,21 @@ calculate_indices <- function(spectra, band_defns, instrument = "MODIS", indices
 }
 
 
+# Function to rename the sites to standard names.
+
+standard_site_names <- function(unispec_file) {
+  # Standardize Site names from 2019 version to 2020 onwards
+  unispec_file <- unispec_file %>%
+    mutate(Site = ifelse(Site %in% c("WSG1", "WSG23", "WSG"), "WSG89", Site))  %>%
+    mutate(Site = ifelse(Site %in% c("DHT", "HTH", "HEATH"), "DHT89", Site)) %>%
+    mutate(Site = ifelse(Site %in% c("MAT", "MAT-SH"), "MAT89", Site)) %>%
+    mutate(Site = ifelse(Site %in% c("LMAT"), "MAT06", Site)) %>%
+    mutate(Site = ifelse(Site %in% c("HIST", "HIST81"), "MAT81", Site)) %>%
+    mutate(Site = ifelse(Site %in% c("SHB2", "SHB"), "SHB89", Site)) %>%
+    mutate(Site = ifelse(Site %in% c("MNAT"), "MNT97", Site)) %>%
+    mutate(Site = ifelse(Site %in% c("NANT", "NNT97"), "MNN97", Site))
+  return(unispec_file)
+}
 ## SANITY CHECK FUNCTIONS
 
 check_scan_times <- function(raw_data) {
@@ -204,4 +219,43 @@ find_sheet <- function(key_file,name_check) {
   if (is.null(key_sheet)) {showNotification(paste("Column names should match ",toString(headers)),duration = 15,type = "error")}
   req(key_sheet, cancelOutput = TRUE)
 return(key_sheet)
+}
+
+# Get current index in form for plotting 
+current_index_data_ndvi <- function (index_data) {
+  index_data %>%
+  select(-Spectra) %>%
+  unnest(Indices) %>%
+  select(-BandDefinition) %>%
+  spread(Index, Value) %>%
+  
+  # Select useful columns
+  select(DateTime,
+         Date,
+         Site,
+         Block,
+         Treatment,
+         Replicate,
+         FileNum,
+         NDVI) %>%
+  
+  # Create additional columns
+  mutate(Year = lubridate::year(DateTime),
+         DOY = lubridate::yday(DateTime)) %>%
+  mutate(Block = as.numeric(str_extract(Block, "\\d"))) %>%
+  mutate(Replicate = as.character(Replicate))%>% 
+  mutate(Site = as.character(Site)) %>%
+  mutate(collection_year = "Current") %>%
+  
+  # remove non-data (ref, dark, throwaway) scans
+  filter(!str_detect(Treatment, "REF|DARK|THROWAWAY")) %>%
+  # Standardize Site names from 2019 version to 2020 onwards
+  mutate(Site = ifelse(Site %in% c("WSG1", "WSG23", "WSG"), "WSG89", Site))  %>%
+  mutate(Site = ifelse(Site %in% c("DHT", "HTH", "HEATH"), "DHT89", Site)) %>%
+  mutate(Site = ifelse(Site %in% c("MAT", "MAT-SH"), "MAT89", Site)) %>%
+  mutate(Site = ifelse(Site %in% c("LMAT"), "MAT06", Site)) %>%
+  mutate(Site = ifelse(Site %in% c("HIST", "HIST81"), "MAT81", Site)) %>%
+  mutate(Site = ifelse(Site %in% c("SHB2", "SHB"), "SHB89", Site)) %>%
+  mutate(Site = ifelse(Site %in% c("MNAT"), "MNT97", Site)) %>%
+  mutate(Site = ifelse(Site %in% c("NANT", "NNT97"), "MNN97", Site)) 
 }
