@@ -132,11 +132,11 @@ server <- function(input, output, session) {
   })
   
   #Update Treatments based on selected Site
-  site_subset <- reactive({
-    req(input$selectsite)
+  site_subset <-reactive({
+    req(keys(),input$selectsite)
     filter(keys(), Site %in% input$selectsite)
   })
-  observeEvent(input$selectsite, {
+  observeEvent(c(input$selectsite,input$key_file), {
      req(site_subset())
      choices <- c("All","Spectra_maxed",unique(site_subset()$Treatment))
      updateSelectInput(inputId = "treatments",choices = choices, selected ="All")
@@ -173,11 +173,12 @@ server <- function(input, output, session) {
       left_join(
         input$spu_file %>% 
           select(spu_filename = name) %>%
-          mutate(Site = toupper(str_extract(spu_filename, "^[:alnum:]{3,}"))) %>%
+          mutate(Site = toupper(str_extract(spu_filename, "^([a-zA-Z]+[0-9]+)(_[a-zA-Z]+[0-9]+)?"))) %>%
           mutate(FileNum = str_extract(spu_filename, "\\d{5}") %>% as.numeric()),
         by = c("Site", "FileNum")
       ) %>%
        filter(Date %in% spu_df()$Date) %>%
+       separate_rows(Site, sep = "_") %>% 
        arrange(Site, spu_filename)
   })
   # * Read the .spu data ---------------------------------------------------
@@ -187,10 +188,12 @@ server <- function(input, output, session) {
     on.exit(removeNotification(id), add = TRUE)
     # Read metadata text lines (9) from the spu files
     spu_filedata <- pmap_dfr(list(input$spu_file$datapath,input$spu_file$name), read_spu_file_metadata) %>%
-    mutate(Site = toupper(str_extract(spu_filename, "^[:alnum:]{3,}"))) %>%
+    mutate(Site = toupper(str_extract(spu_filename, "^([a-zA-Z]+[0-9]+)(_[a-zA-Z]+[0-9]+)?"))) %>%
     mutate(Spectra=map(input$spu_file$datapath, function(x) read_spu_file_spectra(x))) %>% 
     mutate(Date = date(DateTime)) %>%
+    separate_rows(Site, sep = "_") %>% 
     relocate(Date, .after = DateTime)
+    
     return(spu_filedata)
   })
   
@@ -217,6 +220,8 @@ server <- function(input, output, session) {
      refdata<-full_data() %>%
        ## Get the spectra for reference files
        filter(Treatment == "REF") %>%
+       #Separate any multi site reference scans, e.g. MNT97_NNT97
+       separate_rows(Site,sep = "_") %>%
        ### Unnest Spectra & calculate correction factor
        unnest(Spectra) %>%
        filter(Wavelength > 400, Wavelength < 1000) %>% # remove edge wavelengths, instrument unreliable at extremes
@@ -239,7 +244,7 @@ server <- function(input, output, session) {
    })
    # * Get integration times of ref data for each site --------------------------
    ref_int_values <- reactive({ 
-     full_data() %>%
+     ref_data() %>%
        filter(Treatment == "REF") %>%
        group_by(Date, Site) %>% 
        select(Date,Site,Integration) %>%
@@ -253,7 +258,6 @@ server <- function(input, output, session) {
        group_by(Date,Site,FileNum) %>%
        mutate(Integration.ref = ifelse(is.na(Integration.ref),Integration.ref, 
                                        Integration.ref[which.min(abs(Integration.data-Integration.ref))])) %>%
-       distinct(FileNum, .keep_all = TRUE) %>%
        unnest(Spectra) %>% 
        filter(Wavelength > 400, Wavelength < 1000) %>%
        # # assign the "Integration.ref" value closest to data scan integration time
@@ -376,7 +380,7 @@ server <- function(input, output, session) {
     
     selected_b <-unique(processed_spectra() %>% select(Block))$Block
     updateCheckboxGroupInput(session, inputId = "choice_block", choices = selected_b,
-                             selected = selected_b[1])
+                             selected = selected_b)
     
     selected_s <-unique(processed_spectra() %>% select(Site))$Site
     updateCheckboxGroupInput(session, inputId = "choice_site", choices = selected_s,
@@ -442,12 +446,13 @@ server <- function(input, output, session) {
     req(input$selectfile)
     if(is.null(input$selectfile) | !str_detect(input$selectfile,".spu")) {return()}
 
-    data_corrected_ref_integration() %>%
+    df <- data_corrected_ref_integration() %>%
       filter(spu_filename == input$selectfile) %>%  
       tidyr::gather(key = Channel, value = Intensity, ChB, ChA) %>%
-      tidyr::gather(key = ref_part, value = Reflectance_Intensity, Intensity, raw_reflectance) %>% 
+      tidyr::gather(key = ref_part, value = Reflectance_Intensity, Intensity, raw_reflectance) 
+      if(nrow(df) == 0) {return()} 
       ## viz
-      ggplot(mapping = aes(x = Wavelength, y = Reflectance_Intensity)) +
+      ggplot(df, mapping = aes(x = Wavelength, y = Reflectance_Intensity)) +
       geom_line(aes(color=Channel)) +
       facet_wrap("ref_part", scales = "free")+
       labs(title = "Refelectance Intensity",
