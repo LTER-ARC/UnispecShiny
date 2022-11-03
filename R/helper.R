@@ -12,8 +12,32 @@ if (any(installed_packages == FALSE)) {
 # Packages loading
 invisible(lapply(packages, library, character.only = TRUE))
 
+# Color band definitions for calculate_indices function
+band_defns <- tribble(
+  ~definition, ~color, ~min, ~max,
+  "ITEX", "red", 560, 600,
+  "ITEX", "nir", 725, 1000,
+  "MODIS", "red", 620, 670, 
+  "MODIS", "nir", 841, 876,
+  "MODIS", "blue", 459,479,
+  "SKYE", "red", 620, 680,
+  "SKYE", "nir", 830, 880,
+  "SKYE", "blue", 455, 480,
+  "ToolikGIS_Drone_2018", "red", 640, 680,
+  "ToolikGIS_Drone_2018", "nir", 820, 890,
+  "ToolikGIS_MicaSense_2019", "blue", 455, 495,
+  "ToolikGIS_MicaSense_2019", "green", 540, 580,
+  "ToolikGIS_MicaSense_2019", "red", 658, 678,
+  "ToolikGIS_MicaSense_2019", "red_edge", 707, 727,
+  "ToolikGIS_MicaSense_2019", "near_ir", 800, 880,
+  "ToolikEDC", "red", 560, 680,
+  "ToolikEDC", "nir", 725, 1000
+)
 # FUNCTIONS for processing spu data
 
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+# Read the metadata from the .spu file
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 read_spu_file_metadata <- function(filepath,filename, info = "short") {
   # DESCRIPTION: Reads first 9 text lines in .spu files 
   # INPUT: .spu file -- collected using PPSystems UnispecDC
@@ -76,8 +100,9 @@ read_spu_file_metadata <- function(filepath,filename, info = "short") {
   
   return(metadata)
 }
-
-
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+# Read the spectra data from .spu file
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 read_spu_file_spectra <- function(filename) {
   # DESCRIPTION: For a generic .spu file regardless of name, extract spectral data
   # INPUT: Unispec-DC .spu file
@@ -90,9 +115,9 @@ read_spu_file_spectra <- function(filename) {
   
   return(data)
 }
-
-
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 # Assign nearest reference value
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 assign_closest_ref <- function(data_int, ref_int) {
   # Get the nearest integration 
   
@@ -102,36 +127,20 @@ assign_closest_ref <- function(data_int, ref_int) {
   
   return(REF_Integration)
 }
-
-# Color band definitions for calculate_indices function
-band_defns <- tribble(
-  ~definition, ~color, ~min, ~max,
-  "ITEX", "red", 560, 600,
-  "ITEX", "nir", 725, 1000,
-  "MODIS", "red", 620, 670, 
-  "MODIS", "nir", 841, 876,
-  "MODIS", "blue", 459,479,
-  "SKYE", "red", 620, 680,
-  "SKYE", "nir", 830, 880,
-  "SKYE", "blue", 455, 480,
-  "ToolikGIS_Drone_2018", "red", 640, 680,
-  "ToolikGIS_Drone_2018", "nir", 820, 890,
-  "ToolikGIS_MicaSense_2019", "blue", 455, 495,
-  "ToolikGIS_MicaSense_2019", "green", 540, 580,
-  "ToolikGIS_MicaSense_2019", "red", 658, 678,
-  "ToolikGIS_MicaSense_2019", "red_edge", 707, 727,
-  "ToolikGIS_MicaSense_2019", "near_ir", 800, 880,
-  "ToolikEDC", "red", 560, 680,
-  "ToolikEDC", "nir", 725, 1000
-)
-
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+#  Calculates indices, e.g. NDVI, EVI, and EVI2
+# Using a list of wavelength and reflectance 
+# NOTE: Since each .spu' Spectra is mapped to this function this
+# function is called for every .spu file. The mapping takes avery long to complete.
+# The function calculate_indices2 which take an unnested spectra is about 25x faster.
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 calculate_indices <- function(spectra, band_defns, instrument = "MODIS", indices = "NDVI") {
-  # Calculates NDVI, EVI, and EVI2 from dataframe including Wavelength : Spectra 
-  ## inputs: spectra - dataframe with Wavelength, Reflectance columns
+  # Calculates NDVI, EVI, and EVI2 from dataframe  
+  ## inputs: spectra - dataframe with a list Wavelength, Reflectance columns
   ##         band_defns : dataframe defining wavelengths definining colors 
   ##         instrument : e.g. MODIS, SKYE, ITEX
   ##         indicies   : the index to return 
-  ## output: Index - name of vegetation index
+  ## output:A list named Index - name of vegetation index
   ##         BandDefinition - name of "instrument" or spectral band definition used
   ##         Value - value of index, with the band definition used. 
   
@@ -154,9 +163,10 @@ calculate_indices <- function(spectra, band_defns, instrument = "MODIS", indices
     spread(color, Reflectance) %>% 
     
     ## INDEX DEFINITIONS
-    mutate(NDVI = (nir-red)/(nir+red)) %>%
-           # EVI = 2.5*((nir-red)/(nir+6*red-7.5*blue + 1)),
-           # EVI2 = 2.5*((nir-red)/(nir+2.4*red + 1))) %>% 
+    mutate(NDVI = if("NDVI"%in% indices) signif((nir - red) / (nir + red), digits = 4),
+           EVI = if("EVI" %in% indices) signif(2.5*((nir-red)/(nir+6*red-7.5*blue + 1)),digits = 4),
+           EVI2 = if("EVI2" %in% indices)  signif(2.5 * ((nir - red) / (nir + 2.4 * red + 1)),digis = 4)) %>%
+    
     select_at(indices) %>% 
     gather(Index, Value, everything()) %>% 
     
@@ -166,10 +176,74 @@ calculate_indices <- function(spectra, band_defns, instrument = "MODIS", indices
   
   return(index_data) 
 }
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+# Calculates NDVI, EVI, and EVI2 from dataframe !!That is not nested!! 
+#  The dataframe' Spectra is unnested with Wavelength and Reflectance columns
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+calculate_indices2 <-
+  ## inputs: spectra - dataframe with Wavelength, Reflectance columns
+  ##         band_defns : dataframe defining wavelengths definining colors
+  ##         instrument : e.g. MODIS, SKYE, ITEX
+  ##         indicies   : the index or indices to return
+  ## output: returns the dataframe with a list named Index (name of vegetation index
+  ##         BandDefinition - name of "instrument" or spectral band definition used
+  ##         Value - value of index, with the band definition used).
+  function(spectra,
+           band_defns = band_defns,
+           instrument = "MODIS",
+           indices = "NDVI") {
 
+    bands <- band_defns %>%
+      filter(definition == instrument)
+    
+    blue <- bands %>% filter(color == "blue") %>% select(min, max) %>% as.numeric()
+    nir <- bands %>% filter(color == "nir") %>% select(min, max) %>% as.numeric()
+    red <- bands %>% filter(color == "red") %>% select(min, max) %>% as.numeric()
+    
+    spectra_bands <- spectra %>%
+      mutate(color = ifelse(
+        Wavelength >= blue[1] & Wavelength <= blue[2],
+        "blue",
+        ifelse(
+          Wavelength >= red[1] & Wavelength <= red[2],
+          "red",
+          ifelse(Wavelength >= nir[1] &
+                   Wavelength <= nir[2], "nir",
+                 "other")
+        )
+      )) %>%
+      group_by(Date,
+               Site,
+               Block,
+               Treatment,
+               Replicate,
+               spu_filename,
+               DateTime,
+               color) %>%
+      summarize(Reflectance = mean(Reflectance), .groups = "drop")
+    
+    index_data <- spectra_bands %>%
+      spread(color, Reflectance) %>%
+      
+      ## INDEX DEFINITIONS
+      mutate(NDVI = if("NDVI"%in% indices) signif((nir - red) / (nir + red), digits = 4),
+             EVI = if("EVI" %in% indices) signif(2.5*((nir-red)/(nir+6*red-7.5*blue + 1)),digits = 4),
+             EVI2 = if("EVI2" %in% indices)  signif(2.5 * ((nir - red) / (nir + 2.4 * red + 1)),digis = 4)) %>%
 
+      # Add Spectral Band Definition convention
+      select(-nir, -red, -other, -blue) %>%
+      mutate(BandDefinition = instrument) %>%
+      pivot_longer(cols =indices,names_to = "Index",values_to = "Value") %>% 
+      nest(Indices =c("Index","BandDefinition","Value")) %>% 
+      left_join({spectra %>% nest(Spectra =c("Wavelength","Reflectance"))},
+                by = c("Date", "Site", "Block", "Treatment", "Replicate", 
+                       "spu_filename", "DateTime")) %>% 
+      relocate(Indices,.after = last_col())
+  }
+
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 # Function to rename the sites to standard names.
-
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 standard_site_names <- function(unispec_file) {
   # Standardize Site names from 2019 version to 2020 onwards
   unispec_file <- unispec_file %>%
@@ -183,8 +257,10 @@ standard_site_names <- function(unispec_file) {
     mutate(Site = ifelse(Site %in% c("NANT", "NNT97"), "MNN97", Site))
   return(unispec_file)
 }
-## SANITY CHECK FUNCTIONS
 
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+## SANITY CHECK FUNCTIONS
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 check_scan_times <- function(raw_data) {
   
   timedata <- raw_data %>% 
@@ -200,14 +276,17 @@ check_scan_times <- function(raw_data) {
   
   return(time_check)
 }
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 # Check selected file extension
-
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 check_ext <- function(input_id,in_file,f_ext,ERR_message) {
   correct_ext <- all(tools::file_ext(in_file)==f_ext)
   shinyFeedback::feedbackWarning(input_id,!correct_ext,ERR_message)
   req(correct_ext, cancelOutput = TRUE)
 }
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 # Check the excel header row for required column name of "Fi
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 find_sheet <- function(key_file,name_check) {
   wb_sheets <- openxlsx::getSheetNames(key_file)
   key_sheet <- NULL
@@ -220,8 +299,9 @@ find_sheet <- function(key_file,name_check) {
   req(key_sheet, cancelOutput = TRUE)
 return(key_sheet)
 }
-
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 # Get current index in form for plotting 
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 current_index_data_ndvi <- function (index_data) {
   index_data %>%
   select(-Spectra) %>%
