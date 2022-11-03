@@ -26,7 +26,7 @@ lapply(packages, library, character.only = TRUE)
 #   index.rds files. Note: Past data have been cleaned and sites standardized
 #  These data objects are scoped across all sessions
 
-past_indices_data <- readRDS("data/indices_2014-2021.rds")
+past_indices_data <- readRDS("data/indices_2014-2022.rds")
 
 # Define UI for application ----
 
@@ -55,7 +55,7 @@ ui <- fluidPage(
   
   sidebarLayout(
     sidebarPanel(
-      helpText("Select Unispec .spu files"),
+      helpText("Select Unispec .spu files. Note: Cloud drive files can take a long time to load"),
       # Note input$spu_file is a data frame - name, size, and datapath (path and file name)
       fileInput(
         "spu_file",
@@ -99,9 +99,12 @@ ui <- fluidPage(
       ),
       conditionalPanel(
         condition = "input.tabselected == 'Plot Graphs' || input.tabselected == 'Compare to Past Years'",
-        checkboxGroupInput("choice_block", "Block",
-                           choices = NULL),
         checkboxGroupInput("choice_treatment", "Treatment",
+                           choices = NULL)
+      ),
+      conditionalPanel(
+        condition = "input.tabselected == 'Plot Graphs'",
+        checkboxGroupInput("choice_block", "Block",
                            choices = NULL)
       ),
     ),
@@ -162,7 +165,7 @@ server <- function(input, output, session) {
                               selected = selected_b)
      selected_t <- unique(processed_spectra() %>% select(Treatment))$Treatment
      updateCheckboxGroupInput(session, inputId = "choice_treatment", choices = selected_t,
-                              selected = selected_t)
+                              selected = selected_t[1])
    })
    
    # Update the treatment and block choices 
@@ -196,7 +199,7 @@ server <- function(input, output, session) {
   # Check for required column names
     key_sheet <- find_sheet(input$key_file$datapath,header_check)
   # Read in key data and join in the spu_filename
-     input$key_file$datapath %>% purrr::map(function(file_name)
+    df<- input$key_file$datapath %>% purrr::map(function(file_name)
       as_tibble(openxlsx::read.xlsx(file_name, sheet = key_sheet, detectDates = T,cols = c(1:7)))) %>%
       reduce(rbind) %>%
       mutate(across(where(is.character), str_trim)) %>%
@@ -210,10 +213,15 @@ server <- function(input, output, session) {
        filter(Date %in% spu_df()$Date) %>%
        separate_rows(Site, sep = "_") %>% 
        arrange(Site, spu_filename)
+
+     
+     return(df)
   })
   # * Read the .spu data ---------------------------------------------------
   spu_df <- reactive({
     req(input$spu_file)
+    # Check extension of file  
+    check_ext("spu_file",input$spu_file$name,"spu","Invalid file; Please select a .spu file")
     id <- showNotification("Reading spu files' data...", duration = NULL, closeButton = FALSE)
     on.exit(removeNotification(id), add = TRUE)
     # Read metadata text lines (9) from the spu files
@@ -230,8 +238,16 @@ server <- function(input, output, session) {
   
   # * Combine the key file info with the spu data -------------------------------
   full_data <- reactive({
+    req(keys())
     id <- showNotification("Combining data...", duration = NULL, closeButton = FALSE)
     on.exit(removeNotification(id), add = TRUE)
+    
+    shinyFeedback::feedbackWarning(
+      inputId = "key_file",
+      any(nrow(keys()) == 0),
+      text = "The keys dataframe has 0 rows. If correct Key file check the file for missing information.")
+    req(!any(nrow(keys()) == 0),
+        cancelOutput = return())
     
     fd <- left_join(keys(), spu_df(),by = c("Date", "Site", "FileNum","spu_filename")) %>%
       arrange(DateTime) %>%
@@ -244,12 +260,20 @@ server <- function(input, output, session) {
     return(fd)
   })
    
-  # * Reference data  -----------------------------------------------------------
+  # * Reference corrected data  -----------------------------------------------------------
    # Calculate the correction factor (chA/chB) for all the wavelengths of the REF files
    # Using the integration times to join the correction factor to the treatment scans, i.e.
    # the REF integration time nearest to data scan integration time.
    ref_data <- reactive ({
      req(full_data())
+     
+     shinyFeedback::feedbackWarning(
+       inputId = "key_file",
+       any(is.na(full_data() %>% filter(Treatment=="REF") %>% .$spu_filename)),
+       text = "A reference has no FileNum. Check Key File.")
+    req(!any(is.na(full_data() %>% filter(Treatment=="REF") %>% .$spu_filename)),
+         cancelOutput = TRUE)
+     
      refdata<-full_data() %>%
        ## Get the spectra for reference files
        filter(Treatment == "REF") %>%
@@ -261,6 +285,7 @@ server <- function(input, output, session) {
        mutate(correction_factor = ChA / ChB) %>%
        ### Group repeated REF measurements based on your plot set-up (choose Block or NOT)
        group_by(Date, Site, Integration, Wavelength)
+     
      shinyFeedback::feedbackWarning(
        inputId = "key_file",
        any(is.na(refdata$correction_factor)),
@@ -275,7 +300,7 @@ server <- function(input, output, session) {
                  ref_filenames = str_c(spu_filename,collapse = ", "), .groups = "keep") %>% 
        rename(Integration.ref = Integration)
    })
-   # * . Get integration times of ref data for each site --------------------------
+   # ** 1 Get integration times of ref data for each site --------------------------
    ref_int_values <- reactive({ 
      ref_data() %>%
        filter(Treatment == "REF") %>%
@@ -283,10 +308,10 @@ server <- function(input, output, session) {
        select(Date,Site,Integration) %>%
        distinct()
    })
-   # * . Join reference scan integration time -----------------------------------
+   # ** 2 Join reference scan integration time -----------------------------------
    # to the nearest data scan integration time
    data_corrected_ref_integration <- reactive ({
-     req(full_data, input$key_file)
+     req(full_data(), input$key_file)
      full_join(full_data(), ref_int_values(), by = c("Date","Site"),suffix = c(".data",".ref")) %>%
        group_by(Date,Site,FileNum) %>%
        mutate(Integration.ref = ifelse(is.na(Integration.ref),Integration.ref, 
@@ -305,11 +330,11 @@ server <- function(input, output, session) {
        mutate(corrected_reflectance = raw_reflectance*correction_factor)
    })
    
-# * Get data ready for Plot and past data graphs tabs ----
+# * Data for Plot and past data graphs tabs ----
    processed_spectra <- reactive({  
      data_corrected_ref_integration() %>% 
        mutate(across(where(is.factor), as.character)) %>%  # Convert factors so we can filter
-       dplyr::filter(!Treatment %in% c("DARK", "REF")) %>%
+       dplyr::filter(!toupper(Treatment) %in% c("DARK", "REF","IGNOR")) %>%
        mutate(Block = as.numeric(str_extract(Block, "\\d"))) %>% # convert "B1", etc  to numeric
        standard_site_names()
    })
@@ -318,7 +343,7 @@ server <- function(input, output, session) {
      req(index_data()) %>% 
        unnest(cols = c(Indices)) %>%
        mutate(across(where(is.factor), as.character)) %>%  # Convert factors so we can filter
-       dplyr::filter(!Treatment %in% c("DARK", "REF")) %>%
+       dplyr::filter(!toupper(Treatment) %in% c("DARK", "REF","IGNOR")) %>%
        mutate(Block = as.numeric(str_extract(Block, "\\d"))) %>% # convert "B1", etc  to numeric
        dplyr::filter(Index %in% c("NDVI"))%>%
        rename(NDVI = Value) %>% 
@@ -332,12 +357,15 @@ server <- function(input, output, session) {
      
      data_corrected_ref_integration() %>%
        select(-ChB, -ChA, -raw_reflectance, -correction_factor) %>%
+       filter(!toupper(Treatment) %in% c("DARK", "REF","IGNOR")) %>% 
        rename(Reflectance = corrected_reflectance) %>%
-       nest(Spectra = c(Wavelength, Reflectance)) %>%
-       # Calculate NDVI
-       mutate(Indices = map(Spectra, function(x) calculate_indices(x, 
-                                                                   band_defns = band_defns, instrument = "MODIS", indices = "NDVI"))
-       )
+       #Calculate NDVI
+         # Commented out the nested slower way of calculating indices
+           #nest(Spectra = c(Wavelength, Reflectance)) %>%
+           # mutate(Indices = map(Spectra, function(x) 
+           #        calculate_indices(x,band_defns = band_defns, instrument = "MODIS", indices = "NDVI")))
+       calculate_indices2(band_defns = band_defns, instrument = "MODIS", indices = "NDVI")
+       
    })
 # * Join past years indices data with indexes processed ----
    past_data_all <- reactive({
@@ -400,8 +428,8 @@ server <- function(input, output, session) {
     unnest(Spectra) %>% 
     filter(ChA > 65000 | ChB > 65000, Site %in% input$choice_site) %>% 
     group_by(spu_filename)%>%
-    mutate(NDVI_OK = all(Wavelength < 615)) %>%
-    select(spu_filename, NDVI_OK) %>%
+    mutate(Wavelengths_Greater_615_OK = all(Wavelength < 615)) %>%
+    select(spu_filename, Wavelengths_Greater_615_OK) %>%
     unique() %>%
     ungroup() %>% 
     {if(nrow(.) == 0) add_row(., spu_filename = "No maxed out specra.") else . }
@@ -518,7 +546,7 @@ server <- function(input, output, session) {
     files_not_in_key()
     })
   output$maxedfiles <- DT::renderDataTable({
-    datatable(maxed_files(), caption = "Maxed out spu files")
+    datatable(maxed_files(), caption = h3("Maxed out spu files."))
   })
     
 ##--- Plot References Tab-------------------------------------------------------
@@ -578,6 +606,7 @@ server <- function(input, output, session) {
         Block = as.factor(Block),
         Reflectance = raw_reflectance
       )
+    if (nrow(sub_df)== 0) return()
     ### Plot
     plotly::ggplotly(
       ggplot(sub_df, mapping = aes(x = Wavelength, y = Reflectance)) +
@@ -590,6 +619,7 @@ server <- function(input, output, session) {
     )
   })
   output$plot_indices <- renderPlotly({
+    req(input$choice_treatment,input$choice_block)
     sub_df <- processed_indices() %>%
       filter(
         Site %in% input$choice_site,
@@ -598,6 +628,7 @@ server <- function(input, output, session) {
       ) %>%
       group_by(Date, Site, Block, Treatment) %>%
       mutate(Replicate = as.character(Replicate))
+    if (nrow(sub_df)== 0) return()
     
     ### Plot
     plotly::ggplotly(
@@ -619,17 +650,19 @@ server <- function(input, output, session) {
     #                          selected = selected_b)
     sub_df <- past_data_all() %>%
       select(Site,Year,Date,DOY,Treatment,NDVI,collection_year) %>%
-      group_by(Site, Year, DOY, Date, Treatment, collection_year) %>% 
+      group_by(collection_year, Site, Year, Date, DOY, Treatment) %>% 
       filter(Site %in%input$choice_site,Treatment %in% input$choice_treatment)%>%
       summarise(sd = sd(NDVI,na.rm = T),
                 NDVI = mean(NDVI, na.rm = T), .groups = "keep")
     
     plotly::ggplotly(
       
-      ggplot(data =  sub_df, aes(x = DOY,y = NDVI, color = factor(Year), customdata = collection_year)) +
-        geom_point(aes(alpha = 0.5, shape = factor(collection_year), size = factor(collection_year))) +
-        scale_size_manual(values=c(4,2))+
-        geom_line() +
+      ggplot(data =  sub_df, aes(x = DOY,y = NDVI, customdata = collection_year)) +
+        geom_point(data= sub_df %>% filter(collection_year=="Past"),show.legend = FALSE) +
+        geom_line(data= sub_df) +
+        aes(color = factor(Year),linetype = factor(Year)) +
+        geom_point(data= sub_df %>% filter(collection_year=="Current"),size = 4) +
+        #scale_size_manual(values=c(4,2))+
         facet_grid(Site ~ Treatment) +
         #formatting
         theme_minimal() +
