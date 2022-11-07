@@ -206,14 +206,21 @@ server <- function(input, output, session) {
       left_join(
         input$spu_file %>% 
           select(spu_filename = name) %>%
-          mutate(Site = toupper(str_extract(spu_filename, "^([a-zA-Z]+[0-9]+)(_[a-zA-Z]+[0-9]+)?"))) %>%
+          mutate(Site = toupper(str_extract(spu_filename, "^([a-zA-Z]+[0-9]+)(-[a-zA-Z]+[0-9]+)?"))) %>%
           mutate(FileNum = str_extract(spu_filename, "\\d{5}") %>% as.numeric()),
         by = c("Site", "FileNum")
       ) %>%
        filter(Date %in% spu_df()$Date) %>%
-       separate_rows(Site, sep = "_") %>% 
+       separate_rows(Site, sep = "-") %>% 
        arrange(Site, spu_filename)
-
+    
+     if(nrow(df) == 0) {
+       shinyFeedback::feedbackWarning(
+         inputId = "key_file",
+         any(nrow(df) == 0),
+         text = "The keys dataframe has 0 rows. Check Key file name or the file for missing information.")
+       NULL -> fd  #Remove fd data object
+       return()}
      
      return(df)
   })
@@ -226,11 +233,11 @@ server <- function(input, output, session) {
     on.exit(removeNotification(id), add = TRUE)
     # Read metadata text lines (9) from the spu files
     spu_filedata <- pmap_dfr(list(input$spu_file$datapath,input$spu_file$name), read_spu_file_metadata) %>%
-    mutate(Site = toupper(str_extract(spu_filename, "^([a-zA-Z]+[0-9]+)(_[a-zA-Z]+[0-9]+)?"))) %>%
+    mutate(Site = toupper(str_extract(spu_filename, "^([a-zA-Z]+[0-9]+)(-[a-zA-Z]+[0-9]+)?"))) %>%
       # Read in spectra data 
     mutate(Spectra=map(input$spu_file$datapath, function(x) read_spu_file_spectra(x))) %>% 
     mutate(Date = date(DateTime)) %>%
-    separate_rows(Site, sep = "_") %>% 
+    separate_rows(Site, sep = "-") %>% 
     relocate(Date, .after = DateTime)
     
     return(spu_filedata)
