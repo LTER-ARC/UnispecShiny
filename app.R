@@ -147,7 +147,7 @@ server <- function(input, output, session) {
 
  #update spu_filename based on selected site and treatments
    #Using head to get 1st element; leaving as NULL didn't work),
-   observeEvent(c(input$choice_site, input$treatments), {
+   observeEvent(c(input$choice_site, input$treatments, input$key_file), {
      choices <-  switch(input$treatments,
                         All = {site_subset() %>% select(spu_filename)},
                         Spectra_maxed = {maxed_files()$spu_filename},
@@ -157,31 +157,23 @@ server <- function(input, output, session) {
    })
    
  # Update input choices for Plot and Past Data Graphs
-   #  using all the Blocks and Treatments in the processed spectra file
-   observeEvent(index_data(),{
-     
-     selected_b <-unique(processed_spectra() %>% select(Block))$Block
-     updateCheckboxGroupInput(session, inputId = "choice_block", choices = selected_b,
-                              selected = selected_b)
-     selected_t <- unique(processed_spectra() %>% select(Treatment))$Treatment
-     updateCheckboxGroupInput(session, inputId = "choice_treatment", choices = selected_t,
-                              selected = selected_t[1])
-   })
-   
+
    # Update the treatment and block choices 
-   observeEvent(input$choice_site,{
+   observeEvent(c(input$choice_site,input$key_file), {
      
-     before_selected <-input$choice_treatment
+     # Get all the treatments for a site
      selected_t <-unique(processed_spectra() %>% 
                            filter(Site ==input$choice_site) %>%
                            select(Treatment))$Treatment %>% factor() %>% levels()
+     # Check if any previous selected treatments are in the new selected site
+     before_selected <-if(any(input$choice_treatment %in% selected_t)) {input$choice_treatment} else {selected_t[1]}
      updateCheckboxGroupInput(session, inputId = "choice_treatment", choices = selected_t,
                               selected = before_selected)
-     
-     before_selected <-input$choice_block
+     # Update the block selection
      selected_b <-unique(processed_spectra() %>% 
                            filter(Site ==input$choice_site) %>%
                            select(Block))$Block %>% factor() %>% levels()
+     before_selected <-if(is.null( input$choice_block)) {selected_b} else {input$choice_block}
      updateCheckboxGroupInput(session, inputId = "choice_block", choices = selected_b,
                               selected = before_selected)    
    })
