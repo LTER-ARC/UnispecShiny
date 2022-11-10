@@ -186,6 +186,7 @@ server <- function(input, output, session) {
   # to warn about incorrect file selection
   keys <- reactive({
     req(input$key_file, input$spu_file,spu_df())
+    
   # Check extension of file  
     check_ext("key_file",input$key_file$name,"xlsx","Invalid file; Please select a .xlsx file")
   # Check for required column names
@@ -649,6 +650,7 @@ server <- function(input, output, session) {
       filter(Site %in%input$choice_site,Treatment %in% input$choice_treatment)%>%
       summarise(sd = sd(NDVI,na.rm = T),
                 NDVI = mean(NDVI, na.rm = T), .groups = "keep")
+    if (nrow(sub_df)== 0) return()
     
     plotly::ggplotly(
       
