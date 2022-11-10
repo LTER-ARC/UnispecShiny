@@ -475,17 +475,16 @@ server <- function(input, output, session) {
      # Tables below the plots
      # Selected file key file information
      output$key_selected <- renderTable({
-       req(input$spu_file, input$key_file)
+       req(input$spu_file, input$key_file, keys())
        if (is.null(input$selectfile)) {
          return()
        }
        
-       input_file_num <-
-         as.integer(str_extract(input$selectfile, "\\d{5}"))
-       input_site = toupper(str_extract(input$selectfile, "^[:alnum:]{3,}"))
+       # input_file_num <- as.integer(str_extract(input$selectfile, "\\d{5}"))
+       # input_site <- toupper(str_extract(input$selectfile, "^[:alnum:]{3,}"))
+         
        key_info <-
-         keys() %>% dplyr::filter(FileNum == input_file_num &
-                                    Site == input_site)
+         keys() %>% dplyr::filter(spu_filename == input$selectfile) %>% mutate(Date = as.character(Date))
        validate(need(nrow(key_info) > 0, "No Key information found."))
        return(key_info)
      })
