@@ -198,13 +198,14 @@ server <- function(input, output, session) {
       left_join(
         input$spu_file %>% 
           select(spu_filename = name) %>%
-          mutate(Site = toupper(str_extract(spu_filename, "^([a-zA-Z]+[0-9]+)(-[a-zA-Z]+[0-9]+)?"))) %>%
+          mutate(Site = toupper(str_extract(spu_filename, "^([a-zA-Z]+)([0-9]+)?(-[a-zA-Z]+)?([0-9]+)?"))) %>%
           mutate(FileNum = str_extract(spu_filename, "\\d{5}") %>% as.numeric()),
         by = c("Site", "FileNum")
       ) %>%
        filter(Date %in% spu_df()$Date) %>%
        separate_rows(Site, sep = "-") %>% 
-       arrange(Site, spu_filename)
+       arrange(Site, spu_filename) %>% 
+      standard_site_names()
     
      if(nrow(df) == 0) {
        shinyFeedback::feedbackWarning(
@@ -225,12 +226,13 @@ server <- function(input, output, session) {
     on.exit(removeNotification(id), add = TRUE)
     # Read metadata text lines (9) from the spu files
     spu_filedata <- pmap_dfr(list(input$spu_file$datapath,input$spu_file$name), read_spu_file_metadata) %>%
-    mutate(Site = toupper(str_extract(spu_filename, "^([a-zA-Z]+[0-9]+)(-[a-zA-Z]+[0-9]+)?"))) %>%
+    mutate(Site = toupper(str_extract(spu_filename, "^([a-zA-Z]+)([0-9]+)?(-[a-zA-Z]+)?([0-9]+)?"))) %>%
       # Read in spectra data 
     mutate(Spectra=map(input$spu_file$datapath, function(x) read_spu_file_spectra(x))) %>% 
     mutate(Date = date(DateTime)) %>%
     separate_rows(Site, sep = "-") %>% 
-    relocate(Date, .after = DateTime)
+    relocate(Date, .after = DateTime) %>% 
+    standard_site_names()
     
     return(spu_filedata)
   })
@@ -241,16 +243,10 @@ server <- function(input, output, session) {
     id <- showNotification("Combining data...", duration = NULL, closeButton = FALSE)
     on.exit(removeNotification(id), add = TRUE)
     
-    shinyFeedback::feedbackWarning(
-      inputId = "key_file",
-      any(nrow(keys()) == 0),
-      text = "The keys dataframe has 0 rows. If correct Key file check the file for missing information.")
-    req(!any(nrow(keys()) == 0),
-        cancelOutput = return())
-    
     fd <- left_join(keys(), spu_df(),by = c("Date", "Site", "FileNum","spu_filename")) %>%
       arrange(DateTime) %>%
       mutate_at(.vars = vars(Site, Block, Treatment), .funs = factor)
+    
     shinyFeedback::feedbackWarning(
           inputId = "spu_file",
           all(is.na(fd$spu_filename)),
@@ -363,7 +359,8 @@ server <- function(input, output, session) {
            #nest(Spectra = c(Wavelength, Reflectance)) %>%
            # mutate(Indices = map(Spectra, function(x) 
            #        calculate_indices(x,band_defns = band_defns, instrument = "MODIS", indices = "NDVI")))
-       calculate_indices2(band_defns = band_defns, instrument = "MODIS", indices = "NDVI")
+       calculate_indices2(band_defns = band_defns, instrument = "MODIS", indices = "NDVI") %>% 
+       standard_site_names()
        
    })
 # * Join past years indices data with indexes processed ----
