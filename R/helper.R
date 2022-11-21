@@ -51,7 +51,7 @@ read_spu_file_metadata <- function(filepath,filename, info = "short") {
   # Line 1: Extract the file name in the spu file as a check. Some file names have spaces 
   spu_filename <- str_replace(text[1],".*[\\\\]([A-z0-9.]\\s*)","\\1") %>% # extract filename
     str_replace("\"","") # removes trailing quote at end of line 
-  FileNum <- str_extract(spu_filename, "\\d{5}") %>% as.numeric() # from 5 digits in filename
+  FileNum <- str_extract(spu_filename, "\\d{4,5}") %>% as.numeric() # from 5 digits in filename
   
   # Line 2: 
   Remarks <- str_split(text[2], pattern = " ")[[1]] # split by "space"
@@ -87,7 +87,7 @@ read_spu_file_metadata <- function(filepath,filename, info = "short") {
   
   # Truncated Filename - use as SCANID to join to other dataframes
   spu_filename <- unlist(str_split(filename, pattern = "/")) %>% last()
-  FileNum <- str_extract(spu_filename, "\\d{5}") %>% as.numeric() # from 5 digits in filename
+  FileNum <- str_extract(spu_filename, "\\d{4,5}") %>% as.numeric() # from 5 digits in filename
   # Metadata 
   metadata <- tibble(spu_filename, DateTime, FileNum, ScanType, Integration, NumberScans,Minimum_wavelength,Minimum_value, Maximum_wavelength, Maximum_value, Limits, Temperature, Battery, Aux, DarkscanID, Remarks)
   
@@ -245,13 +245,13 @@ calculate_indices2 <-
 # Function to rename the sites to standard names.
 #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 standard_site_names <- function(unispec_file) {
-  # Standardize Site names from 2019 version to 2020 onwards
+  # Standardize Site names from 2019 version to 2020 onward
   unispec_file <- unispec_file %>%
-    mutate(Site = ifelse(Site %in% c("WSG1", "WSG23", "WSG"), "WSG89", Site))  %>%
+    mutate(Site = ifelse(Site %in% c("WSG1", "WSG23", "WSG","WSG2"), "WSG89", Site))  %>%
     mutate(Site = ifelse(Site %in% c("DHT", "HTH", "HEATH"), "DHT89", Site)) %>%
     mutate(Site = ifelse(Site %in% c("MAT", "MAT-SH"), "MAT89", Site)) %>%
     mutate(Site = ifelse(Site %in% c("LMAT"), "MAT06", Site)) %>%
-    mutate(Site = ifelse(Site %in% c("HIST", "HIST81"), "MAT81", Site)) %>%
+    mutate(Site = ifelse(Site %in% c("HIST", "HIST81","HST"), "MAT81", Site)) %>%
     mutate(Site = ifelse(Site %in% c("SHB2", "SHB"), "SHB89", Site)) %>%
     mutate(Site = ifelse(Site %in% c("MNAT"), "MNT97", Site)) %>%
     mutate(Site = ifelse(Site %in% c("NANT", "NNT97"), "MNN97", Site))
