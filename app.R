@@ -130,7 +130,7 @@ server <- function(input, output, session) {
   # Choices are update depending on site selected and treatment
  
   #Update site input based on the key file loaded
-  observeEvent(keys(),{
+  observeEvent(c(keys(),input$spu_file),{
     updateSelectInput(session, inputId = "choice_site",choices = unique(keys()$Site))
   })
   
@@ -139,7 +139,7 @@ server <- function(input, output, session) {
     req(keys(),input$choice_site)
     filter(keys(), Site %in% input$choice_site)
   })
-  observeEvent(c(input$choice_site,input$key_file), {
+  observeEvent(c(input$choice_site,input$key_file,input$spu_file), {
      req(site_subset())
      choices <- c("All","Spectra_maxed",unique(site_subset()$Treatment))
      updateSelectInput(inputId = "treatments",choices = choices, selected ="All")
@@ -159,7 +159,7 @@ server <- function(input, output, session) {
  # Update input choices for Plot and Past Data Graphs
 
    # Update the treatment and block choices 
-   observeEvent(c(input$choice_site,input$key_file), {
+   observeEvent(c(input$choice_site,input$key_file, input$spu_file), {
      
      # Get all the treatments for a site
      selected_t <-unique(processed_spectra() %>% 
@@ -199,8 +199,8 @@ server <- function(input, output, session) {
       left_join(
         input$spu_file %>% 
           select(spu_filename = name) %>%
-          mutate(Site = toupper(str_extract(spu_filename, "^([a-zA-Z]+)([0-9]+)?(-[a-zA-Z]+)?([0-9]+)?"))) %>%
-          mutate(FileNum = str_extract(spu_filename, "\\d{5}") %>% as.numeric()),
+          mutate(Site = toupper(str_extract(spu_filename, "^([a-zA-Z]+)([0-9]+)?((-[a-zA-Z]+)([0-9]+)?)*"))) %>%
+          mutate(FileNum = str_extract(spu_filename, "\\d{4,5}") %>% as.numeric()),
         by = c("Site", "FileNum")
       ) %>%
        filter(Date %in% spu_df()$Date) %>%
@@ -227,7 +227,7 @@ server <- function(input, output, session) {
     on.exit(removeNotification(id), add = TRUE)
     # Read metadata text lines (9) from the spu files
     spu_filedata <- pmap_dfr(list(input$spu_file$datapath,input$spu_file$name), read_spu_file_metadata) %>%
-    mutate(Site = toupper(str_extract(spu_filename, "^([a-zA-Z]+)([0-9]+)?(-[a-zA-Z]+)?([0-9]+)?"))) %>%
+    mutate(Site = toupper(str_extract(spu_filename, "^([a-zA-Z]+)([0-9]+)?((-[a-zA-Z]+)([0-9]+)?)*"))) %>%
       # Read in spectra data 
     mutate(Spectra=map(input$spu_file$datapath, function(x) read_spu_file_spectra(x))) %>% 
     mutate(Date = date(DateTime)) %>%
@@ -390,7 +390,13 @@ server <- function(input, output, session) {
       # reorder columns to see output better
       select(spu_filename, FileNum, Site, Block, Treatment, Replicate)
   })
-  
+  # * Check for number of scans that are not 5 or 10.----
+   treatment_odd_number <- reactive({
+     filter(keys(), keys()$Site %in% input$choice_site) %>% 
+     group_by(Site, Block,Treatment) %>% 
+     summarise(Total_count=n(), .groups = "keep") %>%
+    filter(!Total_count %in% c(5,10), Treatment != "DARK")
+     })
  # * Table of checks ------------------------------------------------------
   checks_table<- reactive({
     spu_df_selected_site <-spu_df() %>% filter(Site %in% input$choice_site)
@@ -534,7 +540,10 @@ server <- function(input, output, session) {
         )) %>%
       DT::formatStyle(names(missing_info()), backgroundColor = styleEqual(NA, "red"))
     })
-  
+  output$treatment_odd_no <- DT::renderDataTable(
+    treatment_odd_number(),
+    caption = h3("Treatments with number of scans not equal 5 or 10")
+  )
   output$checks_table <- DT::renderDataTable(checks_table())
   
   output$not_in_key <- DT::renderDataTable({
@@ -731,6 +740,7 @@ server <- function(input, output, session) {
                 DT::dataTableOutput("not_in_key"),
                 DT::dataTableOutput("checks_table"),
                 DT::dataTableOutput("maxedfiles"),
+                DT::dataTableOutput("treatment_odd_no"),
                 style = "font-size:80%"),
                 id = "checks"
                 ),
