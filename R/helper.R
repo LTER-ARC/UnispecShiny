@@ -250,9 +250,9 @@ standard_site_names <- function(unispec_file) {
     mutate(Site = ifelse(Site %in% c("WSG1", "WSG23", "WSG","WSG2"), "WSG89", Site))  %>%
     mutate(Site = ifelse(Site %in% c("DHT", "HTH", "HEATH"), "DHT89", Site)) %>%
     mutate(Site = ifelse(Site %in% c("MAT", "MAT-SH"), "MAT89", Site)) %>%
-    mutate(Site = ifelse(Site %in% c("LMAT"), "MAT06", Site)) %>%
+    mutate(Site = ifelse(Site %in% c("LMAT","LOF"), "MAT06", Site)) %>%
     mutate(Site = ifelse(Site %in% c("HIST", "HIST81","HST"), "MAT81", Site)) %>%
-    mutate(Site = ifelse(Site %in% c("SHB2", "SHB"), "SHB89", Site)) %>%
+    mutate(Site = ifelse(Site %in% c("SHB2", "SHB1", "SHB"), "SHB89", Site)) %>%
     mutate(Site = ifelse(Site %in% c("MNAT"), "MNT97", Site)) %>%
     mutate(Site = ifelse(Site %in% c("NANT", "NNT97"), "MNN97", Site))
   return(unispec_file)
