@@ -22,7 +22,7 @@ if (any(installed_packages == FALSE)) {
 lapply(packages, library, character.only = TRUE)
 
 # ---------------------------------------------------------------------------------
-# Before launching the shiny app, read in data from past years and any newer 
+# Before launching the shiny app, lets read in the data from past years and any newer 
 #   index.rds files. Note: Past data have been cleaned and sites standardized
 #  These data objects are scoped across all sessions
 
@@ -233,7 +233,8 @@ server <- function(input, output, session) {
     mutate(Date = date(DateTime)) %>%
     separate_rows(Site, sep = "-") %>% 
     relocate(Date, .after = DateTime) %>% 
-    standard_site_names()
+    standard_site_names() %>%
+    mutate(Date = unique(Date)[1])  #Case where the time was off and some of the scans' times were the next day.
     
     return(spu_filedata)
   })
