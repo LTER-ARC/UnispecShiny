@@ -10,23 +10,35 @@
 
 ## Required Packages -----
 
-packages <- c("shiny","rstudioapi","tidyverse","lubridate",
-              "openxlsx","plotly","data.table", "DT","shinyjs","viridis")
-
-# Install packages not yet installed
-installed_packages <- packages %in% rownames(installed.packages())
-if (any(installed_packages == FALSE)) {
-  install.packages(packages[!installed_packages])
-}
-# Packages loading
-lapply(packages, library, character.only = TRUE)
-
+# packages <- c("shiny","rstudioapi","tidyverse","lubridate",
+#               "openxlsx","plotly","data.table", "DT","shinyjs","viridis")
+# 
+# # Install packages not yet installed
+# # installed_packages <- packages %in% rownames(installed.packages())
+# # if (any(installed_packages == FALSE)) {
+# #   install.packages(packages[!installed_packages])
+# #}
+# # Packages loading
+# lapply(packages, library, character.only = TRUE)
+library(shiny)
+library(rstudioapi)
+library(tidyverse)
+library(openxlsx)
+library(plotly)
+library(data.table)
+library(DT)
+library(shinyjs)
+library(viridis)
 # ---------------------------------------------------------------------------------
-# Before launching the shiny app, lets read in the data from past years and any newer 
-#   index.rds files. Note: Past data have been cleaned and sites standardized
-#  These data objects are scoped across all sessions
 
-past_indices_data <- readRDS("data/indices_2014-2022.rds")
+#Allow up to 10 mb file upload.
+options(shiny.maxRequestSize = 10 * 1024^2)
+
+# 2023-03-30 Changed to input file UI to selecting the past indices file.
+# And i n the files tab an updated past indices file can be saved.
+# Note: Past data have been cleaned and sites standardized 
+
+#past_indices_data <- readRDS("data/indices_2014-2022.rds")
 
 # Define UI for application ----
 
@@ -55,8 +67,17 @@ ui <- fluidPage(
   
   sidebarLayout(
     sidebarPanel(
+      helpText("Select the multiyear indices file."),
+      # Note input$multiyear_indices_file is a data frame - name, size, and datapath (path and file name)
+      fileInput(
+        "multiyear_indices_file",
+        "Upload the multiyear indices.rps file",
+        placeholder = "indices_2014-current.rds",
+        multiple = FALSE,
+        accept = c(".rds")
+      ),
       helpText("Select Unispec .spu files. Note: Cloud drive files can take a long time to load"),
-      # Note input$spu_file is a data frame - name, size, and datapath (path and file name)
+      # Note input$spu_file is a data frame - name, size, and data path (path and file name)
       fileInput(
         "spu_file",
         "Upload .spu files",
@@ -123,7 +144,13 @@ server <- function(input, output, session) {
   #!!!Change if the template file changes!!!!
   header_check <- "FileNum" 
   #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-  
+ 
+  past_indices_data <- reactive({
+    req(input$multiyear_indices_file)
+    # Get the multiyear indices file but first check extension of file  
+    check_ext("multiyear_indices_file",input$multiyear_indices_file$name,"rds","Invalid file; Please select a .rds file")
+    readRDS(input$multiyear_indices_file$datapath)
+  })
 ##-Sidebar updates of SelectInputs ---------------------------------------------
   
   # Update of Select input widgets ----
@@ -240,7 +267,7 @@ server <- function(input, output, session) {
   })
   
   # * Combine the key file info with the spu data -------------------------------
-  full_data <- reactive({
+  key_spu_data <- reactive({
     req(keys())
     id <- showNotification("Combining data...", duration = NULL, closeButton = FALSE)
     on.exit(removeNotification(id), add = TRUE)
@@ -262,16 +289,16 @@ server <- function(input, output, session) {
    # Using the integration times to join the correction factor to the treatment scans, i.e.
    # the REF integration time nearest to data scan integration time.
    ref_data <- reactive ({
-     req(full_data())
+     req(key_spu_data())
      
      shinyFeedback::feedbackWarning(
        inputId = "key_file",
-       any(is.na(full_data() %>% filter(Treatment=="REF") %>% .$spu_filename)),
+       any(is.na(key_spu_data() %>% filter(Treatment=="REF") %>% .$spu_filename)),
        text = "A reference has no FileNum. Check Key File.")
-    req(!any(is.na(full_data() %>% filter(Treatment=="REF") %>% .$spu_filename)),
+    req(!any(is.na(key_spu_data() %>% filter(Treatment=="REF") %>% .$spu_filename)),
          cancelOutput = TRUE)
      
-     refdata<-full_data() %>%
+     refdata<-key_spu_data() %>%
        ## Get the spectra for reference files
        filter(Treatment == "REF") %>%
        #Separate any multi site reference scans, e.g. MNT97_NNT97
@@ -308,8 +335,8 @@ server <- function(input, output, session) {
    # ** 2 Join reference scan integration time -----------------------------------
    # to the nearest data scan integration time
    data_corrected_ref_integration <- reactive ({
-     req(full_data(), input$key_file)
-     full_join(full_data(), ref_int_values(), by = c("Date","Site"),suffix = c(".data",".ref")) %>%
+     req(key_spu_data(), input$key_file)
+     full_join(key_spu_data(), ref_int_values(), by = c("Date","Site"),suffix = c(".data",".ref")) %>%
        group_by(Date,Site,FileNum) %>%
        mutate(Integration.ref = ifelse(is.na(Integration.ref),Integration.ref, 
                                        Integration.ref[which.min(abs(Integration.data-Integration.ref))])) %>%
@@ -361,24 +388,28 @@ server <- function(input, output, session) {
            #nest(Spectra = c(Wavelength, Reflectance)) %>%
            # mutate(Indices = map(Spectra, function(x) 
            #        calculate_indices(x,band_defns = band_defns, instrument = "MODIS", indices = "NDVI")))
-       calculate_indices2(band_defns = band_defns, instrument = "MODIS", indices = "NDVI") %>% 
+       calculate_indices2(band_defns = band_defns, instrument = "MODIS", indices = c("NDVI")) %>% 
        standard_site_names()
        
    })
 # * Join past years indices data with indexes processed ----
    past_data_all <- reactive({
-     req(processed_indices(),input$choice_site,input$choice_treatment)
+     req(processed_indices(),input$choice_site,input$choice_treatment,
+         input$multiyear_indices_file)
+
      current_index_data_ndvi(index_data()) %>%
-     full_join(past_indices_data,by = c("Year", "Date", "Site", "Treatment", "NDVI",
-                                          "DOY","collection_year","Replicate","Block"))
+     full_join(past_indices_data(),by = c("Year", "Date", "DateTime", "Site", "Treatment","FileNum",
+                                        "NDVI","DOY","collection_year","Replicate","Block")) %>% 
+      arrange(DateTime) %>% 
+      unique()
    })
    
   # Checks on the data --------------------------------------------------------
    
   # * Check for missing information --------------------------------------------
   missing_info <- reactive ({
-    req(full_data())
-    full_data() %>% 
+    req(key_spu_data())
+    key_spu_data() %>% 
       filter(Site %in% input$choice_site) %>%  # Only show checks on selected site.
       filter(is.na(spu_filename) | 
                is.na(Site) |
@@ -427,8 +458,8 @@ server <- function(input, output, session) {
 
   # * Maxed out spectra --------------------------------------------------------
   maxed_files <-  reactive ({
-   req(full_data())
-   full_data() %>% 
+   req(key_spu_data())
+   key_spu_data() %>% 
     unnest(Spectra) %>% 
     filter(ChA > 65000 | ChB > 65000, Site %in% input$choice_site) %>% 
     group_by(spu_filename)%>%
@@ -515,7 +546,7 @@ server <- function(input, output, session) {
 ## Combined Key and spu data Tab
   output$all_data <- DT::renderDataTable({
     req(input$key_file)
-    full_data() %>% select(-Spectra)
+    key_spu_data() %>% select(-Spectra)
     })
   
   output$indices <- DT::renderDataTable({
@@ -696,7 +727,7 @@ server <- function(input, output, session) {
         theme(legend.position = "left"))
   })
   
-#--- Save Files Tab ------------------------------------------------------------
+#--- Save Files buttons ------------------------------------------------------------
   output$download_corrected_data <- downloadHandler(
     filename = function() {
       paste0(data_corrected_ref_integration()$Date[1], "_corrected.rds")
@@ -705,12 +736,12 @@ server <- function(input, output, session) {
       write_rds(data_corrected_ref_integration(), file)
     }
   )
-  output$download_full_data <- downloadHandler(
+  output$download_key_spu_data <- downloadHandler(
     filename = function() {
-      paste0(full_data()$Date[1], "_combined.rds")
+      paste0(key_spu_data()$Date[1], "_combined.rds")
     },
     content = function(file) {
-      write_rds(full_data(), file)
+      write_rds(key_spu_data(), file)
     }
   )
   output$download_indices_data <- downloadHandler(
@@ -719,6 +750,14 @@ server <- function(input, output, session) {
     },
     content = function(file) {
       write_rds(index_data(), file)
+    }
+  )
+  output$update_all_data <- downloadHandler(
+    filename = function() {
+      paste0("indices_2014-current.rds")
+    },
+    content = function(file) {
+      write_rds(past_data_all(), file)
     }
   )
 # ---- MainPanel tabset renderUI code-------------------------
@@ -749,18 +788,6 @@ server <- function(input, output, session) {
                  plotlyOutput("ref_plot2"),
                  id = "ref_plot"
                  ),
-        tabPanel("Files", 
-                 tabsetPanel(
-                   tabPanel("Field Keys",DT::dataTableOutput("key_table")
-                   ),
-                   tabPanel("All data combined",
-                            DT::dataTableOutput("all_data"),
-                            downloadButton("download_corrected_data", "Save corrected spectra as .rds")
-                   ),
-                   tabPanel("NDVI",
-                            DT::dataTableOutput("indices"),
-                            downloadButton("download_indices_data", "Save indices as .rds"))
-                 )),
         tabPanel("Plot Graphs",
                  plotlyOutput("plot_reflec"),
                  plotlyOutput("plot_indices")
@@ -769,7 +796,21 @@ server <- function(input, output, session) {
                  plotlyOutput("plot_past_years"),
                  h3("Click on a point to see data points by block"),
                  plotlyOutput("click")),
-        id ="tabselected"
+        tabPanel("Files", 
+                 tabsetPanel(
+                   tabPanel("Field Keys",DT::dataTableOutput("key_table")
+                   ),
+                   tabPanel("Combined keys and .spu data",
+                            DT::dataTableOutput("all_data"),
+                            downloadButton("download_corrected_data", "Save corrected spectra as .rds")
+                   ),
+                   tabPanel("NDVI",
+                            DT::dataTableOutput("indices"),
+                            downloadButton("download_indices_data", "Save indices as .rds"),
+                            downloadButton("update_all_data", "Update the all data file"))
+                 )),
+        id ="tabselected",
+        
         )
   })
 }
