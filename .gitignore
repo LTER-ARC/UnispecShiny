@@ -2,3 +2,9 @@
 .Rhistory
 .RData
 .Ruserdata
+test_code.R
+indices_2014-2022.csv
+incdices_2014-current.csv
+index_test.R
+poly_test.R
+get_older_data.R

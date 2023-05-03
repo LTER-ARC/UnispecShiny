@@ -5,21 +5,18 @@
 # Find out more about building applications with Shiny here:
 #
 #    http://shiny.rstudio.com/
-#
-
+# ---
+# title: "UnispecShiny app"
+# author: "Jim Laundre"
+# date: "2022-08-04"
+# Description:  A shiny app to display raw Unispec scans, error checks and 
+# label raw data with plot ids, reference correction, calculate indices and plot
+# with past years scans.
+# 
+# ---
 
 ## Required Packages -----
 
-# packages <- c("shiny","rstudioapi","tidyverse","lubridate",
-#               "openxlsx","plotly","data.table", "DT","shinyjs","viridis")
-# 
-# # Install packages not yet installed
-# # installed_packages <- packages %in% rownames(installed.packages())
-# # if (any(installed_packages == FALSE)) {
-# #   install.packages(packages[!installed_packages])
-# #}
-# # Packages loading
-# lapply(packages, library, character.only = TRUE)
 library(shiny)
 library(rstudioapi)
 library(tidyverse)
@@ -35,10 +32,10 @@ library(viridis)
 options(shiny.maxRequestSize = 10 * 1024^2)
 
 # 2023-03-30 Changed to input file UI to selecting the past indices file.
-# And i n the files tab an updated past indices file can be saved.
+# Added in the files tab where an updated past indices file can be saved.
 # Note: Past data have been cleaned and sites standardized 
 
-#past_indices_data <- readRDS("data/indices_2014-2022.rds")
+#default_past_indices_data <- readRDS("data/indices_2014-2022.rds")
 
 # Define UI for application ----
 
@@ -67,11 +64,11 @@ ui <- fluidPage(
   
   sidebarLayout(
     sidebarPanel(
-      helpText("Select the multiyear indices file."),
+      helpText("Update the multiyear indices file?"),
       # Note input$multiyear_indices_file is a data frame - name, size, and datapath (path and file name)
       fileInput(
         "multiyear_indices_file",
-        "Upload the multiyear indices.rps file",
+        "Upload a new multiyear indices.rps file?",
         placeholder = "indices_2014-current.rds",
         multiple = FALSE,
         accept = c(".rds")
@@ -138,18 +135,24 @@ ui <- fluidPage(
 server <- function(input, output, session) {
   # Helper functions and required libraries
   source("R/helper.R",local = TRUE)
+  instruments <-tibble(sensor = c("modis","micasense"), indices = c("NDVI", "NDVI,NDVIRE") ) 
+  
+   index2plot <- "modisNDVI"
   
   #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
   # Template column name to use as a check for correct sheet -----------------
   #!!!Change if the template file changes!!!!
   header_check <- "FileNum" 
   #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
- 
-  past_indices_data <- reactive({
-    req(input$multiyear_indices_file)
-    # Get the multiyear indices file but first check extension of file  
-    check_ext("multiyear_indices_file",input$multiyear_indices_file$name,"rds","Invalid file; Please select a .rds file")
-    readRDS(input$multiyear_indices_file$datapath)
+
+   past_indices_data <- reactive({
+    if (is.null(input$multiyear_indices_file)) {
+      readRDS("data/indices_2014-2022.rds")
+    } else {
+      # Get the multiyear indices file but first check extension of file
+      check_ext("multiyear_indices_file", input$multiyear_indices_file$name, "rds", "Invalid file; Please select a .rds file")
+      readRDS(input$multiyear_indices_file$datapath)
+    }
   })
 ##-Sidebar updates of SelectInputs ---------------------------------------------
   
@@ -206,7 +209,7 @@ server <- function(input, output, session) {
    })
   #__________________________________________________________________________
    
-#----Reactive outputs ----
+# Reactive outputs ----
   
   # * Read in the Excel key file ---------------------------------------
   # and output a combined table if more then one file.  Using shinyFeedback
@@ -266,7 +269,8 @@ server <- function(input, output, session) {
     return(spu_filedata)
   })
   
-  # * Combine the key file info with the spu data -------------------------------
+  # * Combine the key file info with the spu data ------------------------------
+   
   key_spu_data <- reactive({
     req(keys())
     id <- showNotification("Combining data...", duration = NULL, closeButton = FALSE)
@@ -284,7 +288,7 @@ server <- function(input, output, session) {
     return(fd)
   })
    
-  # * Reference corrected data  -----------------------------------------------------------
+# * Reference corrected data  -----------------------------------------------------------
    # Calculate the correction factor (chA/chB) for all the wavelengths of the REF files
    # Using the integration times to join the correction factor to the treatment scans, i.e.
    # the REF integration time nearest to data scan integration time.
@@ -318,13 +322,14 @@ server <- function(input, output, session) {
      
      return(refdata)
    })
+  # Get the mean correction factor for each Date, Site, Integration, and Wavelength 
    correction_factors <- reactive ({
      ref_data() %>% 
        summarize(correction_factor = mean(correction_factor), 
                  ref_filenames = str_c(spu_filename,collapse = ", "), .groups = "keep") %>% 
        rename(Integration.ref = Integration)
    })
-   # ** 1 Get integration times of ref data for each site --------------------------
+   ## 1) Get integration times of ref data for each site --------------------------
    ref_int_values <- reactive({ 
      ref_data() %>%
        filter(Treatment == "REF") %>%
@@ -332,8 +337,8 @@ server <- function(input, output, session) {
        select(Date,Site,Integration) %>%
        distinct()
    })
-   # ** 2 Join reference scan integration time -----------------------------------
-   # to the nearest data scan integration time
+   ##  2) Join reference scan integration time -----------------------------------
+   #      to the nearest data scan integration time
    data_corrected_ref_integration <- reactive ({
      req(key_spu_data(), input$key_file)
      full_join(key_spu_data(), ref_int_values(), by = c("Date","Site"),suffix = c(".data",".ref")) %>%
@@ -354,7 +359,8 @@ server <- function(input, output, session) {
        mutate(corrected_reflectance = raw_reflectance*correction_factor)
    })
    
-# * Data for Plot and past data graphs tabs ----
+# * Data for Plots tabs ----
+    ## 1) Corrected Processed Spectra ----
    processed_spectra <- reactive({  
      data_corrected_ref_integration() %>% 
        mutate(across(where(is.factor), as.character)) %>%  # Convert factors so we can filter
@@ -362,15 +368,19 @@ server <- function(input, output, session) {
        mutate(Block = as.numeric(str_extract(Block, "\\d"))) %>% # convert "B1", etc  to numeric
        standard_site_names()
    })
-   # Unnest the indices 
+   ## 2) Corrected Processedindices ----
    processed_indices <- reactive({
      req(index_data()) %>% 
        unnest(cols = c(Indices)) %>%
        mutate(across(where(is.factor), as.character)) %>%  # Convert factors so we can filter
        dplyr::filter(!toupper(Treatment) %in% c("DARK", "REF","IGNOR")) %>%
        mutate(Block = as.numeric(str_extract(Block, "\\d"))) %>% # convert "B1", etc  to numeric
-       dplyr::filter(Index %in% c("NDVI"))%>%
-       rename(NDVI = Value) %>% 
+       mutate(
+         Year = lubridate::year(DateTime),
+         DOY = lubridate::yday(DateTime)
+       ) %>%
+       mutate(Replicate = as.character(Replicate)) %>%
+       mutate(Site = as.character(Site)) %>%
        standard_site_names()
    })
    
@@ -388,19 +398,22 @@ server <- function(input, output, session) {
            #nest(Spectra = c(Wavelength, Reflectance)) %>%
            # mutate(Indices = map(Spectra, function(x) 
            #        calculate_indices(x,band_defns = band_defns, instrument = "MODIS", indices = "NDVI")))
-       calculate_indices2(band_defns = band_defns, instrument = "MODIS", indices = c("NDVI")) %>% 
+       #calculate_indices2(band_defns = band_defns, instrument = "MODIS", indices = c("NDVI")) %>% 
+       calculate_indices3(instruments) %>% 
        standard_site_names()
        
    })
 # * Join past years indices data with indexes processed ----
    past_data_all <- reactive({
-     req(processed_indices(),input$choice_site,input$choice_treatment,
-         input$multiyear_indices_file)
+     req(processed_indices(),past_indices_data())
 
-     current_index_data_ndvi(index_data()) %>%
-     full_join(past_indices_data(),by = c("Year", "Date", "DateTime", "Site", "Treatment","FileNum",
-                                        "NDVI","DOY","collection_year","Replicate","Block")) %>% 
-      arrange(DateTime) %>% 
+     processed_indices() %>%
+     mutate(collection_year = "Current") %>%
+       # remove non-data (ref, dark, throwaway) scans
+     filter(!str_detect(Treatment, "REF|DARK|THROWAWAY")) %>%
+     full_join(past_indices_data(),by = c("Year", "Date", "DateTime", "Site", "Treatment",
+                                       "DOY","collection_year","Replicate","Block", index2plot)) %>% 
+      arrange(Date) %>% 
       unique()
    })
    
@@ -552,8 +565,8 @@ server <- function(input, output, session) {
   output$indices <- DT::renderDataTable({
     req(input$key_file)
     index_data() %>% 
-      select(-Spectra,-ref_filenames, 
-             -Integration.data, -Integration.ref) %>%
+      # select(-Spectra,-ref_filenames, 
+      #        -Integration.data, -Integration.ref) %>%
       unnest(Indices)
   })
   
@@ -669,7 +682,7 @@ server <- function(input, output, session) {
     
     ### Plot
     plotly::ggplotly(
-      ggplot(sub_df, mapping = aes(x = Block, y = NDVI)) +
+      ggplot(sub_df, mapping = aes(x = Block, y = .data[[index2plot]])) +
         geom_point(aes(color = Replicate)) +
         facet_grid(Site ~ Treatment) +
         theme_light() +
@@ -677,57 +690,63 @@ server <- function(input, output, session) {
         theme(legend.position = "left")
     )
   })
-#  Past Years Plot Tab-------------------------------------------
-  
-  output$plot_past_years <- renderPlotly({
-    # req(sub_past_plot_data())
-    # # Select all the blocks since it is an average of all the blocks. TODO hide blocks choices
-    # selected_b <-unique(processed_spectra() %>% select(Block))$Block
-    # updateCheckboxGroupInput(session, inputId = "choice_block", choices = selected_b,
-    #                          selected = selected_b)
-    sub_df <- past_data_all() %>%
-      select(Site,Year,Date,DOY,Treatment,NDVI,collection_year) %>%
-      group_by(collection_year, Site, Year, Date, DOY, Treatment) %>% 
-      filter(Site %in%input$choice_site,Treatment %in% input$choice_treatment)%>%
-      summarise(sd = sd(NDVI,na.rm = T),
-                NDVI = mean(NDVI, na.rm = T), .groups = "keep")
-    if (nrow(sub_df)== 0) return()
-    
-    plotly::ggplotly(
-      
-      ggplot(data =  sub_df, aes(x = DOY,y = NDVI, customdata = collection_year)) +
-        geom_point(data= sub_df %>% filter(collection_year=="Past"),show.legend = FALSE) +
-        geom_line(data= sub_df) +
-        aes(color = factor(Year),linetype = factor(Year)) +
-        geom_point(data= sub_df %>% filter(collection_year=="Current"),size = 4) +
-        #scale_size_manual(values=c(4,2))+
-        facet_grid(Site ~ Treatment) +
-        #formatting
-        theme_minimal() +
-        scale_color_viridis(discrete = TRUE, option = "D")
+#Past Years Plot Tab-------------------------------------------
+
+output$plot_past_years <- renderPlotly({
+  # Summarize the data by the index to plot. Note the .data[[ ]] is used to
+  # get the data of the variable index2plot and !!()function is used to
+  # get the name of the column
+  sub_df <- past_data_all() %>%
+    select(Site, Year, Date, DOY, Treatment, any_of(index2plot), collection_year) %>%
+    group_by(collection_year, Site, Year, Date, DOY, Treatment) %>%
+    filter(Site %in% input$choice_site, Treatment %in% input$choice_treatment) %>%
+    summarize(
+      sd = sd(.data[[index2plot]], na.rm = T),
+      !!(index2plot) := mean(.data[[index2plot]], na.rm = T), .groups = "keep"
     )
-  })
- # Output a graph of NDVI by block from the data of the mouse click
-  output$click <- renderPlotly({
-    d <- event_data("plotly_click")
-    click_data <- past_data_all() %>% filter(Site %in%input$choice_site,Treatment %in% input$choice_treatment)%>% 
-          select(Site,Year,Date,DOY,Treatment,Block,Replicate,NDVI,collection_year) %>%
-          filter(collection_year %in% d$customdata) %>%
-          filter(DOY %in% d$x)
-    if (nrow(click_data)== 0) return()
-    
-    ### Plot
-    plotly::ggplotly(
-      ggplot(click_data,mapping = aes(x = Block, y = NDVI )) + 
-        ggtitle(paste0("Scan date: ",click_data$Date[1]," Day of Year: ",click_data$DOY[1])) +
-        geom_point(aes(color = Replicate)) +
-        facet_grid(Site ~ Treatment) +
-        theme_light()+
-        scale_color_viridis(discrete = TRUE, option = "D")+
-        theme(legend.position = "left"))
-  })
+
+  if (nrow(sub_df) == 0) {
+    return()
+  }
+## Plot current and past data----
+  plotly::ggplotly(
+    ggplot(data = sub_df, aes(x = DOY, y = .data[[index2plot]], customdata = collection_year)) +
+      geom_point(data = sub_df %>% filter(collection_year == "Past"), show.legend = FALSE) +
+      geom_line(data = sub_df) +
+      aes(color = factor(Year), linetype = factor(Year)) +
+      geom_point(data = sub_df %>% filter(collection_year == "Current"), size = 4) +
+      # scale_size_manual(values=c(4,2))+
+      facet_grid(Site ~ Treatment) +
+      # formatting
+      theme_minimal() +
+      scale_color_viridis(discrete = TRUE, option = "D")
+  )
+})
+# Get click data
+output$click <- renderPlotly({
+  d <- event_data("plotly_click")
+  click_data <- past_data_all() %>%
+    filter(Site %in% input$choice_site, Treatment %in% input$choice_treatment) %>%
+    select(Site, Year, Date, DOY, Treatment, Block, Replicate, any_of(index2plot), collection_year) %>%
+    filter(collection_year %in% d$customdata) %>%
+    filter(DOY %in% d$x)
+  if (nrow(click_data) == 0) {
+    return()
+  }
+
+### Plot Plot mouse click data of the index2plot by block----
+  plotly::ggplotly(
+    ggplot(click_data, mapping = aes(x = Block, y = .data[[index2plot]])) +
+      ggtitle(paste0("Scan date: ", click_data$Date[1], " Day of Year: ", click_data$DOY[1])) +
+      geom_point(aes(color = Replicate)) +
+      facet_grid(Site ~ Treatment) +
+      theme_light() +
+      scale_color_viridis(discrete = TRUE, option = "D") +
+      theme(legend.position = "left")
+  )
+})
   
-#--- Save Files buttons ------------------------------------------------------------
+# Save Files buttons ------------------------------------------------------------
   output$download_corrected_data <- downloadHandler(
     filename = function() {
       paste0(data_corrected_ref_integration()$Date[1], "_corrected.rds")
@@ -804,7 +823,7 @@ server <- function(input, output, session) {
                             DT::dataTableOutput("all_data"),
                             downloadButton("download_corrected_data", "Save corrected spectra as .rds")
                    ),
-                   tabPanel("NDVI",
+                   tabPanel(index2plot,
                             DT::dataTableOutput("indices"),
                             downloadButton("download_indices_data", "Save indices as .rds"),
                             downloadButton("update_all_data", "Update the all data file"))
