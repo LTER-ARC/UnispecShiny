@@ -26,18 +26,18 @@ library(data.table)
 library(DT)
 library(shinyjs)
 library(viridis)
-# ---------------------------------------------------------------------------------
+# Notes ---------------------------------------------------------------------------------
 
-#Allow up to 10 mb file upload.
+# Allow up to 10 mb file upload.
 options(shiny.maxRequestSize = 10 * 1024^2)
 
 # 2023-03-30 Changed to input file UI to selecting the past indices file.
 # Added in the files tab where an updated past indices file can be saved.
-# Note: Past data have been cleaned and sites standardized 
+# Note: Past data have been cleaned and sites standardized
 
-#default_past_indices_data <- readRDS("data/indices_2014-2022.rds")
+# The default past indices file loaded is "data/indices_2014-2022.rds"
 
-# Define UI for application ----
+# Define UI for application ---------------------------------------------------
 
 ui <- fluidPage(
   shinyjs::useShinyjs(),
@@ -61,14 +61,13 @@ ui <- fluidPage(
     )
   )),
   titlePanel("Arctic LTER Spectral Reflectance Data"),
-  
   sidebarLayout(
     sidebarPanel(
-      helpText("Update the multiyear indices file?"),
+      #helpText("Default Multi-year file loaded = indices_2014-current.rds."),
       # Note input$multiyear_indices_file is a data frame - name, size, and datapath (path and file name)
       fileInput(
         "multiyear_indices_file",
-        "Upload a new multiyear indices.rps file?",
+        "Default file:indices_2014-current.rds. Upload a new multiyear indices.rds file?",
         placeholder = "indices_2014-current.rds",
         multiple = FALSE,
         accept = c(".rds")
@@ -93,10 +92,10 @@ ui <- fluidPage(
       conditionalPanel(
         condition = "input.tabselected != 'Files'",
         selectInput(
-        "choice_site",
-        "Sites",
-        choices = NULL,
-        multiple = FALSE
+          "choice_site",
+          "Sites",
+          choices = NULL,
+          multiple = FALSE
         )
       ),
       conditionalPanel(
