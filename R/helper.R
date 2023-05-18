@@ -6,6 +6,8 @@ library(openxlsx)
 
 
 # Color band definitions for calculate_indices function
+# used only in calculate_indices and calculate_indices2.  A cut function
+# is used in calculate_indices3
 band_defns <- tribble(
   ~definition, ~color, ~min, ~max,
   "ITEX", "red", 560, 600,
@@ -26,6 +28,20 @@ band_defns <- tribble(
   "ToolikEDC", "red", 560, 680,
   "ToolikEDC", "nir", 725, 1000
 )
+# Breaks and labels for the cut function.  Cut bins the data between break points.
+# The breaks between the bands of interest are labeled "".
+modis_bands_breaks <- c(459, 479, 620, 670, 841, 876)
+modis_bands_labels <- c("blue", "", "red", "", "nir")
+micasense_bands_breaks <- c(455, 495, 540, 580, 658, 678, 707, 727, 800, 880)
+micasense_bands_breaks_labels <- c("blue", "", "green", "", "red", "", "red_edge", "", "nir")
+
+# Indices equations
+NDVI <- "signif((nir - red) / (nir + red), digits = 4)"
+EVI <- "signif(2.5 * ((nir - red) / (nir + 6 * red - 7.5 * blue + 1)), digits = 4)"
+EVI2 <- "signif(2.5 * ((nir - red) / (nir + 2.4 * red + 1)), digis = 4)"
+NDVIRE <- "signif((nir - red_edge) / (nir + red_edge), digits = 4)"
+instruments <-tibble(sensor = c("modis","micasense"), indices = c("NDVI", "NDVI,NDVIRE") )
+
 # FUNCTIONS for processing spu data
 
 # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
@@ -40,20 +56,21 @@ read_spu_file_metadata <- function(filepath, filename, info = "short") {
 
   # Extract info from the file itself, reading metadata from first 9 lines. Create a dataframe
   text <- data.table::fread(filepath, sep = "", header = FALSE, nrows = 9)
-
+  
   # Line 1: Extract the file name in the spu file as a check. Some file names have spaces
   spu_filename <- stringr::str_replace(text[1], ".*[\\\\]([A-z0-9.]\\s*)", "\\1") %>% # extract filename
     str_replace("\"", "") # removes trailing quote at end of line
-  FileNum <- stringr::str_extract(spu_filename, "\\d{4,5}") %>% as.numeric() # from 5 digits in filename
+  FileNum <- stringr::str_extract(spu_filename, "\\d{4,6}") %>% as.numeric() # from 5 digits in filename
 
   # Line 2:
-  Remarks <- stringr::str_split(text[2], pattern = " ")[[1]] # split by "space"
-  Type <- stringr::str_split(Remarks[7], pattern = "=")[[1]][2] # extract relevant part
-  ScanType <- ifelse(grepl("DARKscan", Type, fixed = T), "DARKscan", # format
-    ifelse(grepl("Datascan,DC", Type, fixed = T), "Throwawayscan",
-      Type
-    )
+  Remarks <- text[2]
+  ScanType<- case_when(
+    str_detect(Remarks,"DARKscan") ~  "DARKscan",
+    str_detect(Remarks,"Datascan,DC") ~  "Throwawayscan",
+    str_detect(Remarks,"RCF") ~ "Unispec-Corrected",
+    str_detect(Remarks,"Datascan") ~ "Datascan"                  
   )
+ 
   DarkscanID <- stringr::str_extract(text[2], "Dark=.+.spu")
   Remarks <- text[2]
 
@@ -82,12 +99,15 @@ read_spu_file_metadata <- function(filepath, filename, info = "short") {
 
   # Truncated Filename - use as SCANID to join to other dataframes
   spu_filename <- unlist(stringr::str_split(filename, pattern = "/")) %>% last()
-  FileNum <- stringr::str_extract(spu_filename, "\\d{4,5}") %>% as.numeric() # from 5 digits in filename
+  # get site name based on file name and year of scans
+  Site <- site_name(spu_filename,year(DateTime))
   # Metadata
-  metadata <- tibble(spu_filename, DateTime, FileNum, ScanType, Integration, NumberScans, Minimum_wavelength, Minimum_value, Maximum_wavelength, Maximum_value, Limits, Temperature, Battery, Aux, DarkscanID, Remarks)
+  metadata <- tibble(spu_filename, Site, DateTime, FileNum, ScanType, Integration, NumberScans, 
+                     Minimum_wavelength, Minimum_value, Maximum_wavelength, Maximum_value, Limits, 
+                     Temperature, Battery, Aux, DarkscanID, Remarks)
 
   if (info == "short") {
-    metadata <- metadata %>% select(spu_filename, DateTime, FileNum, Integration)
+    metadata <- metadata %>% select(spu_filename, Site, DateTime, FileNum, Integration,ScanType)
   }
 
   # Print filenames while reading
@@ -104,7 +124,8 @@ read_spu_file_spectra <- function(filename) {
   # OUTPUT: dataframe of spectral data with 3 columns Wavelength, ChB, ChA
 
   # Read spectral intensity data into dataframe
-  data <- data.table::fread(file = filename, skip = 9, col.names = c("Wavelength", "ChB", "ChA"))
+  data <- data.table::fread(file = filename, skip = 9, col.names = c("Wavelength", "ChB", "ChA")) %>% 
+    filter(Wavelength > 400, Wavelength < 1000) %>% # remove edge wavelengths, instrument unreliable at extremes
 
   # print(filename)
 
@@ -116,7 +137,6 @@ read_spu_file_spectra <- function(filename) {
 assign_closest_ref <- function(data_int, ref_int) {
   # Get the nearest integration
 
-  # pick <- which(abs(ref_int-data_int) == min(abs(ref_int-data_int)))
   pick <- sapply(data_int, function(x) which.min(abs(ref_int - x)))
   REF_Integration <- ref_int[pick]
 
@@ -194,9 +214,9 @@ calculate_indices <- function(spectra, band_defns, instrument = "MODIS", indices
 # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 calculate_indices2 <-
   ## inputs: spectra - dataframe with Wavelength, Reflectance columns
-  ##         band_defns : dataframe defining wavelengths definining colors
+  ##         band_defns : dataframe defining wavelengths defining colors
   ##         instrument : e.g. MODIS, SKYE, ITEX
-  ##         indicies   : the index or indices to return
+  ##         indices   : the index or indices to return
   ## output: returns the dataframe with a list named Index (name of vegetation index
   ##         BandDefinition - name of "instrument" or spectral band definition used
   ##         Value - value of index, with the band definition used).
@@ -219,9 +239,6 @@ calculate_indices2 <-
       filter(color == "red") %>%
       select(min, max) %>%
       as.numeric()
-    # ifelse(instrument == "ToolikGIS_MicaSense_2019",
-    #        red_edge <- bands %>%filter(color=="red_edge") %>% select(min, max) %>% as.numeric(),
-    #        red_edge <- NULL)
     if (instrument == "ToolikGIS_MicaSense_2019") {
       red_edge <- bands %>%
         filter(color == "red_edge") %>%
@@ -237,8 +254,6 @@ calculate_indices2 <-
           "red",
           ifelse(Wavelength >= nir[1] &
             Wavelength <= nir[2], "nir",
-          # ifelse(Wavelength >= red_edge[1] & Wavelength <= red_edge[2],
-          #        "red_edge",
           "other"
           )
         )
@@ -282,16 +297,70 @@ calculate_indices2 <-
   }
 
 # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+calculate_indices3 <-
+  ## inputs: spectra - dataframe with Wavelength, 
+  ##         instrument : tibble with sensor,e.g. MODIS, SKYE, ITEX, and 
+  ##            indices the index or indices to return
+  ## output: returns the dataframe with a list named Index (name of vegetation index
+  ##         
+  function(spectra,instruments = insruments) {
+    
+    df2 <- spectra %>%
+      mutate(
+        modis = cut(
+          Wavelength,
+          breaks = c(400, 459, 479, 620, 670, 841, 876, 1000),
+          labels = c("other","blue", "other", "red", "other", "nir","other"),
+        ),
+        micasense = cut(
+          Wavelength,
+          breaks = c(400, 455, 495, 540, 580, 658, 678, 707, 727, 800, 880, 1000),
+          labels = c("other","blue", "other", "green", "other", "red", "other", 
+                     "red_edge", "other", "nir","other")
+        )
+      )
+    
+    index_data <-
+      map2(instruments$sensor,instruments$indices, function(x,y) {
+        indices <- str_split(y,",")[[1]]
+        df2 %>%
+          group_by(
+            Date,
+            Site,
+            Block,
+            Treatment,
+            Replicate,
+            spu_filename,
+            DateTime,
+            .data[[x]]
+          ) %>%
+          summarize(Reflectance = mean(Reflectance), .groups = "drop") %>%
+          spread(.data[[x]], Reflectance) %>%
+          dplyr::mutate(
+            NDVI = if ( str_detect(y,"NDVI")) signif((nir - red) / (nir + red), digits = 4),
+            EVI = if (str_detect(y,"EVI" )) signif(2.5 * ((nir - red) / (nir + 6 * red - 7.5 * blue + 1)), digits = 4),
+            EVI2 = if (str_detect(y,"EVI2")) signif(2.5 * ((nir - red) / (nir + 2.4 * red + 1)), digis = 4),
+            NDVIRE = if (str_detect(y,"NDVIRE")) signif((nir - red_edge) / (nir + red_edge), digits = 4)
+          ) %>% 
+          select(Date,Site,Block,Treatment,Replicate,spu_filename,DateTime,any_of(indices)) %>%
+          rename_with(~paste0(x,.x,recycle0 = TRUE),.cols = any_of(indices)) 
+      }) %>% 
+      reduce(full_join) %>% 
+      nest(Indices = contains("VI"))
+    return(index_data)
+  }
+
+# @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 # Function to rename the sites to standard names.
 # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 standard_site_names <- function(unispec_file) {
   # Standardize Site names from 2019 version to 2020 onward
   unispec_file <- unispec_file %>%
     mutate(Site = ifelse(Site %in% c("WSG1", "WSG23", "WSG", "WSG2"), "WSG89", Site)) %>%
-    mutate(Site = ifelse(Site %in% c("DHT", "HTH", "HEATH"), "DHT89", Site)) %>%
+    mutate(Site = ifelse(Site %in% c("DHT", "DH","HTH", "HEATH","LHTH"), "DHT89", Site)) %>%
     mutate(Site = ifelse(Site %in% c("MAT", "MAT-SH"), "MAT89", Site)) %>%
     mutate(Site = ifelse(Site %in% c("LMAT", "LOF"), "MAT06", Site)) %>%
-    mutate(Site = ifelse(Site %in% c("HIST", "HIST81", "HST"), "MAT81", Site)) %>%
+    mutate(Site = ifelse(Site %in% c("HIST", "HIST81", "HST", "HIS"), "MAT81", Site)) %>%
     mutate(Site = ifelse(Site %in% c("SHB2", "SHB1", "SHB"), "SHB89", Site)) %>%
     mutate(Site = ifelse(Site %in% c("MNAT"), "MNT97", Site)) %>%
     mutate(Site = ifelse(Site %in% c("NANT", "NNT97"), "MNN97", Site))
@@ -335,6 +404,7 @@ find_sheet <- function(key_file, name_check) {
     column_names <- openxlsx::read.xlsx(key_file, sheet = i, colNames = T, rows = 1)
     if (name_check %in% names(column_names)) {
       key_sheet <- i
+      break
     }
   }
   shinyFeedback::feedbackWarning("key_file", is.null(key_sheet), "Check Excel file column names.")
@@ -375,13 +445,27 @@ current_index_data_ndvi <- function(index_data) {
     mutate(collection_year = "Current") %>%
     # remove non-data (ref, dark, throwaway) scans
     filter(!str_detect(Treatment, "REF|DARK|THROWAWAY")) %>%
-    # Standardize Site names from 2019 version to 2020 onwards
-    mutate(Site = ifelse(Site %in% c("WSG1", "WSG23", "WSG"), "WSG89", Site)) %>%
-    mutate(Site = ifelse(Site %in% c("DHT", "HTH", "HEATH"), "DHT89", Site)) %>%
-    mutate(Site = ifelse(Site %in% c("MAT", "MAT-SH"), "MAT89", Site)) %>%
-    mutate(Site = ifelse(Site %in% c("LMAT"), "MAT06", Site)) %>%
-    mutate(Site = ifelse(Site %in% c("HIST", "HIST81"), "MAT81", Site)) %>%
-    mutate(Site = ifelse(Site %in% c("SHB2", "SHB"), "SHB89", Site)) %>%
-    mutate(Site = ifelse(Site %in% c("MNAT"), "MNT97", Site)) %>%
-    mutate(Site = ifelse(Site %in% c("NANT", "NNT97"), "MNN97", Site))
+    # Standardize Site names from 2019 version onward
+    standard_site_names()
+    
+}
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+# get the site name from the .spu file name and year of scans
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+site_name <- function(spu_filename, site_year) {
+  if (site_year > "2016") {
+    Site <- toupper(str_extract(spu_filename, "^([a-zA-Z]+)([0-9]+)?((-[a-zA-Z]+)([0-9]+)?)*"))
+  } else {
+    # For 2016 file names are MMMDDsiteFilenumber, e.g. JUL10LOF00006.spu
+    Site <- toupper(str_replace(spu_filename, "(^.*?\\d{1,2})\\s*([a-zA-Z]*)(\\d{5,7}\\.spu$)", "\\2"))
+    # For 2012 and 2013 the spu filenames have ddmmmsite format; need to remove the 3 letter month 
+    # which was extracted with the site.
+    if (str_length(Site) > 5) {
+      pattern <- c("MAY", "JUN", "JUL", "AUG")
+      for (i in 1:4) {
+        Site <- sub(pattern[i], "", Site)
+      }
+    }
+  }
+  return(Site)
 }
