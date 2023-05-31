@@ -32,7 +32,7 @@
 
 # Data for Plots tabs
 # processed_spectra(): Corrected Processed Spectra
-# processed_indices(): Corrected Processed indices
+# indices_data(): Corrected Processed indices
 #
 #
 # ---
@@ -170,11 +170,14 @@ server <- function(input, output, session) {
 
   past_indices_data <- reactive({
     if (is.null(input$multiyear_indices_file)) {
-      readRDS("data/indices_2014-2022.rds")
+      readRDS("data/indices_2014-2022.rds") %>% 
+      mutate(across(where(is.factor), as.character)) %>%  # Remove factors for joining to current data
+        mutate(Replicate = as.numeric(Replicate))
     } else {
       # Get the multiyear indices file but first check extension of file
       check_ext("multiyear_indices_file", input$multiyear_indices_file$name, "rds", "Invalid file; Please select a .rds file")
-      readRDS(input$multiyear_indices_file$datapath)
+      readRDS(input$multiyear_indices_file$datapath) %>% 
+      mutate(across(where(is.factor), as.character)) # Remove factors for joining to current data
     }
   })
 
@@ -273,18 +276,9 @@ server <- function(input, output, session) {
         as_tibble(openxlsx::read.xlsx(file_name, sheet = key_sheet, detectDates = T, cols = c(1:7)))
       }) %>%
       reduce(rbind) %>%
-      mutate(across(where(is.character), str_trim)) %>%
-      
-      # left_join(
-      #   input$spu_file %>%
-      #     select(spu_filename = name) %>%
-      #     mutate(Site = toupper(str_extract(spu_filename, "^([a-zA-Z]+)([0-9]+)?((-[a-zA-Z]+)([0-9]+)?)*"))) %>%
-      #     mutate(FileNum = str_extract(spu_filename, "\\d{4,5}") %>% as.numeric()),
-      #   by = c("Site", "FileNum")
-      # ) %>% 
-      standard_site_names() %>% 
-      filter(Date %in% spu_df()$Date, Site %in% spu_df()$Site) %>%
-      separate_rows(Site, sep = "-") 
+      mutate(across(where(is.character), str_trim),
+                    FileNum = as.character(FileNum)) %>% # Change to character; REF will be concatenated to file number
+      filter(Date %in% spu_df()$Date, Site %in% spu_df()$Site)
     #arrange(Site, spu_filename) %>%
      
 
@@ -309,15 +303,13 @@ server <- function(input, output, session) {
     on.exit(removeNotification(id), add = TRUE)
     # Read metadata text lines (9) from the spu files
     spu_filedata <- pmap_dfr(list(input$spu_file$datapath, input$spu_file$name), read_spu_file_metadata) %>%
-     # mutate(Site = toupper(str_extract(spu_filename, "^([a-zA-Z]+)([0-9]+)?((-[a-zA-Z]+)([0-9]+)?)*"))) %>%
       # Read in spectra data
       mutate(Spectra = map(input$spu_file$datapath, function(x) read_spu_file_spectra(x))) %>%
       mutate(Date = date(DateTime)) %>%
-      #separate_rows(Site, sep = "-") %>%
       relocate(Date, .after = DateTime) %>%
-      standard_site_names() %>%
-      mutate(Date = unique(Date)[1]) # Case where the time was off and some of the scans' times were the next day.
-
+      mutate(Date = unique(Date)[1],# Case where the time was off and some of the scans' times were the next day.
+             FileNum = as.character(FileNum)) # Change to character; REF will be concatenated to file number)
+      #
     return(spu_filedata)
   })
 
@@ -331,7 +323,12 @@ server <- function(input, output, session) {
     fd <- left_join(spu_df(),keys(),  by = c("Date", "Site", "FileNum")) %>%
       #filter(!is.na(Treatment)) %>% 
       arrange(DateTime) %>%
-      mutate_at(.vars = vars(Site, Block, Treatment), .funs = factor)
+      mutate_at(.vars = vars(Site, Block, Treatment), .funs = factor) %>% 
+      # Give References a unique File Number for cases where a reference scan from a different site is used.
+      mutate(FileNum = ifelse(Treatment %in% c("REF","DARK"),paste0(Treatment,FileNum),FileNum)) %>% 
+      # Separate any multi site reference scans, e.g. MNT97-NNT97
+      separate_rows(Site, sep = "-") %>% 
+      standard_site_names()
 
     shinyFeedback::feedbackWarning(
       inputId = "spu_file",
@@ -357,7 +354,7 @@ server <- function(input, output, session) {
     shinyFeedback::feedbackWarning(
       inputId = "key_file",
       invalid_ref,
-      text = "A reference has no FileNum or there are not REF files. Check Key File."
+      text = "A reference has no FileNum or there are no REF files. Check Key File."
     )
     req(!invalid_ref,
       cancelOutput = TRUE
@@ -366,8 +363,8 @@ server <- function(input, output, session) {
     refdata <- key_spu_data() %>%
       ## Get the spectra for reference files
       filter(Treatment == "REF") %>%
-      # Separate any multi site reference scans, e.g. MNT97_NNT97
-      separate_rows(Site, sep = "_") %>%
+      # Separate any multi site reference scans, e.g. MNT97-NNT97
+      separate_rows(Site, sep = "-") %>%
       ### Unnest Spectra & calculate correction factor
       unnest(Spectra) %>%
       filter(Wavelength > 400, Wavelength < 1000) %>% # remove edge wavelengths, instrument unreliable at extremes
@@ -376,7 +373,7 @@ server <- function(input, output, session) {
       group_by(Date, Site, Integration, Wavelength) %>%
       summarize(
         correction_factor = mean(correction_factor),
-        # Add all the ref spu filenames to vaiable ref_filename
+        # Add all the ref spu filenames to variable ref_filename
         ref_filenames = str_c(spu_filename, collapse = ", "), .groups = "keep"
       ) %>%
       rename(Integration.ref = Integration)
@@ -397,61 +394,76 @@ server <- function(input, output, session) {
       group_by(Date, Site) %>%
       select(Date, Site, Integration.ref) %>%
       distinct() %>%
+      # Separate any multi site reference scans, e.g. MNT97-NNT97
+      separate_rows(Site, sep = "-") %>%
       rename(Integration = Integration.ref) # rename for joining
   })
   ###  3) Join reference scan integration time     ------------------------
-  #      to the nearest data scan integration time
+  #     to the nearest data scan integration time. If several integration times
+  #     there will be a many-to-many relationship. After assigning a integration
+  #     reference time, unique() is used to get rid of the duplicates. 
   data_corrected_ref_integration <- reactive({
-    req(key_spu_data(), input$key_file)
-    full_join(key_spu_data(), ref_int_values(), by = c("Date", "Site"), suffix = c(".data", ".ref")) %>%
-      group_by(Date, Site, FileNum) %>%
-      ## assign the "Integration.ref" value closest to data scan integration time
-      mutate(Integration.ref = ifelse(is.na(Integration.ref), Integration.ref,
-        Integration.ref[which.min(abs(Integration.data - Integration.ref))]
-      )) %>%
-      unnest(Spectra) %>%
-      filter(Wavelength > 400, Wavelength < 1000) %>%
-      rowwise() %>%
-      group_by(Date, Site, Integration.ref) %>%
-      # join data with ref correction factors
-      left_join(., ref_correction_factors(),
-        by = c("Date", "Site", "Wavelength", "Integration.ref")
-      ) %>%
-      ungroup() %>%
-      # calculate raw and corrected reflectances
-      mutate(raw_reflectance = ChB / ChA) %>% # the raw reflectance
-      mutate(corrected_reflectance = ifelse(ScanType == "Unispec-Corrected",
-                                            raw_reflectance, 
-                                            raw_reflectance * correction_factor)
-      )
-  })
+   req(key_spu_data(), input$key_file)
+   full_join(key_spu_data(), ref_int_values(),
+     by = c("Date", "Site"),
+     suffix = c(".data", ".ref"), relationship = "many-to-many"
+   ) %>%
+     group_by(Date, Site, FileNum) %>%
+     ## assign the "Integration.ref" value closest to data scan integration time
+     mutate(Integration.ref = ifelse(is.na(Integration.ref), Integration.ref,
+       Integration.ref[which.min(abs(Integration.data - Integration.ref))]
+     )) %>%
+     unique() %>% 
+     unnest(Spectra) %>%
+     rowwise() %>%
+     group_by(Date, Site, Integration.ref) %>%
+     # join data with ref correction factors
+     left_join(., ref_correction_factors(),
+       by = c("Date", "Site", "Wavelength", "Integration.ref")
+     ) %>%
+     ungroup() %>%
+     # calculate raw and corrected reflectances.
+     # And find maxed out scans and maxed out red bands.
+     mutate(
+       raw_reflectance = ChB / ChA, # the raw reflectance
+       corrected_reflectance = ifelse(ScanType == "Unispec-Corrected",
+         raw_reflectance,
+         raw_reflectance * correction_factor
+       ),
+       Maxout = ChA > 65000 | ChB > 65000,
+       Red_band_maxed = Maxout & Wavelength > 615
+     ) 
+ })
 
   ## Calculate Indices -----------------------------------------------------
   indices_data <- reactive({
-    id <- showNotification("Please wait. Calculating Indices...", duration = NULL, closeButton = FALSE)
-    on.exit(removeNotification(id), add = TRUE)
+   id <- showNotification("Please wait. Calculating Indices...", duration = NULL, closeButton = FALSE)
+   on.exit(removeNotification(id), add = TRUE)
 
-    data_corrected_ref_integration() %>%
-      select(-ChB, -ChA, -raw_reflectance, -correction_factor) %>%
-      filter(!toupper(Treatment) %in% c("DARK", "REF", "IGNOR")) %>%
-      rename(Reflectance = corrected_reflectance) %>%
-      # Calculate NDVI
-      # Commented out the nested slower way of calculating indices
-      # nest(Spectra = c(Wavelength, Reflectance)) %>%
-      # mutate(Indices = map(Spectra, function(x)
-      #        calculate_indices(x,band_defns = band_defns, instrument = "MODIS", indices = "NDVI")))
-      # calculate_indices2(band_defns = band_defns, instrument = "MODIS", indices = c("NDVI")) %>%
-      calculate_indices3(instruments) %>%
-      standard_site_names()
-  })
+   data_corrected_ref_integration() %>%
+     select(-ChB, -ChA, -raw_reflectance, -correction_factor) %>%
+     filter(!toupper(Treatment) %in% c("DARK", "REF", "IGNOR") | !is.na(Treatment)) %>%
+     rename(Reflectance = corrected_reflectance) %>%
+     # Calculate Indices as defined in helper.R
+     calculate_indices3(instruments) %>%
+     unnest(cols = c(Indices)) %>%
+     mutate(across(where(is.factor), as.character)) %>% # Convert factors so we can filter
+     dplyr::filter(!toupper(Treatment) %in% c("DARK", "REF", "IGNOR", "Throwawayscan")) %>%
+     mutate(
+       Block = as.numeric(str_extract(Block, "\\d")), # convert "B1", etc  to numeric
+       Year = lubridate::year(DateTime),
+       DOY = lubridate::yday(DateTime)
+     ) %>%
+     relocate(Year, DOY, .after = Date)
+ })
   ## Join past years indices data with indexes processed ----
   past_data_all <- reactive({
-    req(processed_indices(), past_indices_data())
+    req(indices_data(), past_indices_data())
 
-    processed_indices() %>%
+    indices_data() %>%
       mutate(collection_year = "Current") %>%
       # remove non-data (ref, dark, throwaway) scans
-      filter(!str_detect(Treatment, "REF|DARK|THROWAWAY")) %>%
+      filter(!str_detect(Treatment, "REF|DARK|THROWAWAY")|!is.na(Treatment)) %>%
       full_join(past_indices_data(), by = c(
         "Year", "Date", "DateTime", "Site", "Treatment",
         "DOY", "collection_year", "Replicate", "Block", index2plot
@@ -467,26 +479,9 @@ server <- function(input, output, session) {
     data_corrected_ref_integration() %>%
       mutate(across(where(is.factor), as.character)) %>% # Convert factors so we can filter
       dplyr::filter(!toupper(Treatment) %in% c("DARK", "REF", "IGNOR")) %>%
-      mutate(Block = as.numeric(str_extract(Block, "\\d"))) %>% # convert "B1", etc to numeric
-      standard_site_names()
+      mutate(Block = as.numeric(str_extract(Block, "\\d"))) # convert "B1", etc to numeric
   })
-  ### 2) Corrected Processed indices ----
-  processed_indices <- reactive({
-    req(indices_data())
-    indices_data() %>%
-      unnest(cols = c(Indices)) %>%
-      mutate(across(where(is.factor), as.character)) %>% # Convert factors so we can filter
-      dplyr::filter(!toupper(Treatment) %in% c("DARK", "REF", "IGNOR")) %>%
-      mutate(Block = as.numeric(str_extract(Block, "\\d"))) %>% # convert "B1", etc  to numeric
-      mutate(
-        Year = lubridate::year(DateTime),
-        DOY = lubridate::yday(DateTime)
-      ) %>%
-      mutate(Replicate = as.character(Replicate)) %>%
-      mutate(Site = as.character(Site)) %>%
-      standard_site_names()
-  })
-  
+
   # Checks on the data --------------------------------------------------------
 
   ## Check for missing information --------------------------------------------
@@ -548,14 +543,11 @@ server <- function(input, output, session) {
 
   ## Maxed out spectra --------------------------------------------------------
   maxed_files <- reactive({
-    req(key_spu_data())
-    key_spu_data() %>%
-      unnest(Spectra) %>%
-      filter(ChA > 65000 | ChB > 65000, Site %in% input$choice_site,
-             !is.na(Treatment)) %>%
-      group_by(spu_filename) %>%
-      mutate(Wavelengths_Greater_615_OK = all(Wavelength < 615)) %>%
-      select(spu_filename, Wavelengths_Greater_615_OK) %>%
+    req(data_corrected_ref_integration()) 
+    data_corrected_ref_integration() %>% 
+    filter(Maxout) %>%
+    mutate (Red_band_OK = !Red_band_maxed) %>% 
+    select(Site, Block, Treatment, spu_filename, Maxout, Red_band_OK) %>%
       unique() %>%
       ungroup() %>%
       {
@@ -576,7 +568,7 @@ server <- function(input, output, session) {
       }
 
       df <- data_corrected_ref_integration() %>%
-        filter(spu_filename == input$selectfile) %>%
+        filter(spu_filename == input$selectfile, Site == input$choice_site) %>%
         tidyr::gather(key = Channel, value = Intensity, ChB, ChA) %>%
         tidyr::gather(
           key = ref_part,
@@ -650,8 +642,8 @@ server <- function(input, output, session) {
   ## Calculated indices 
   output$indices <- DT::renderDataTable({
     req(input$key_file)
-    indices_data() %>%
-      unnest(Indices)
+    indices_data() #%>%
+      #unnest(Indices)
   })
 
   ## ------Checks Tab -------------------------------------------------------------
@@ -773,7 +765,7 @@ server <- function(input, output, session) {
   })
   output$plot_indices <- renderPlotly({
     req(input$choice_treatment, input$choice_block)
-    sub_df <- processed_indices() %>%
+    sub_df <- indices_data() %>%
       filter(
         Site %in% input$choice_site,
         Block %in% input$choice_block,
@@ -844,7 +836,8 @@ server <- function(input, output, session) {
     plotly::ggplotly(
       ggplot(click_data, mapping = aes(x = Block, y = .data[[index2plot]])) +
         ggtitle(paste0("Scan date: ", click_data$Date[1], " Day of Year: ", click_data$DOY[1])) +
-        geom_point(aes(color = Replicate)) +
+        geom_point(aes(color = as.character(Replicate))) +
+        labs(color = "Replicate") +
         facet_grid(Site ~ Treatment) +
         theme_light() +
         scale_color_viridis(discrete = TRUE, option = "D") +
@@ -871,7 +864,7 @@ server <- function(input, output, session) {
   )
   output$download_indices_data <- downloadHandler(
     filename = function() {
-      paste0(indices_data()$Date[1], "_index.rds")
+      paste0(indices_data()$Date[1], "_indices.rds")
     },
     content = function(file) {
       write_rds(indices_data(), file)
@@ -901,6 +894,7 @@ server <- function(input, output, session) {
         ),
         id = "spec_plot"
       ),
+      ## Checks ----
       tabPanel("Checks", h4("Checks on key and .spu files "),
         h5("Review the below tables for missing or incorrect information and for maxed out spectra."),
         div(DT::dataTableOutput("missing_data"),
@@ -937,12 +931,15 @@ server <- function(input, output, session) {
           tabPanel("Field Keys", DT::dataTableOutput("key_table")),
           tabPanel(
             "Combined keys and .spu data",
+            p("Note: Table dosen't display the corrected spectra. The Save button will include it."),
             DT::dataTableOutput("all_data"),
             downloadButton("download_corrected_spectra_data", "Save corrected spectra as .rds")
           ),
           tabPanel(
             index2plot,
             DT::dataTableOutput("indices"),
+            h3("Save indices button saves a .rds file with all the calculated indices."),
+            h3("Update the all data file button will update the multiyear indices file with the current data."),
             downloadButton("download_indices_data", "Save indices as .rds"),
             downloadButton("update_all_data", "Update the all data file")
           )
