@@ -104,7 +104,10 @@ read_spu_file_metadata <- function(filepath, filename, info = "short") {
   # Metadata
   metadata <- tibble(spu_filename, Site, DateTime, FileNum, ScanType, Integration, NumberScans, 
                      Minimum_wavelength, Minimum_value, Maximum_wavelength, Maximum_value, Limits, 
-                     Temperature, Battery, Aux, DarkscanID, Remarks)
+                     Temperature, Battery, Aux, DarkscanID, Remarks) %>% 
+    mutate(Date = date(DateTime)) %>%
+    mutate(Date = unique(Date)[1]) %>% # Case where the time was off and some of the scans' times were the next day.
+    relocate(Date, .after = DateTime)
 
   if (info == "short") {
     metadata <- metadata %>% select(spu_filename, Site, DateTime, FileNum, Integration,ScanType)
@@ -125,9 +128,7 @@ read_spu_file_spectra <- function(filename) {
 
   # Read spectral intensity data into dataframe
   data <- data.table::fread(file = filename, skip = 9, col.names = c("Wavelength", "ChB", "ChA")) %>% 
-    filter(Wavelength > 400, Wavelength < 1000) %>% # remove edge wavelengths, instrument unreliable at extremes
-
-  # print(filename)
+    filter(Wavelength > 400, Wavelength < 1000)  # remove edge wavelengths, instrument unreliable at extremes
 
   return(data)
 }
@@ -345,7 +346,7 @@ calculate_indices3 <-
           select(Date,Site,Block,Treatment,Replicate,spu_filename,DateTime,any_of(indices)) %>%
           rename_with(~paste0(x,.x,recycle0 = TRUE),.cols = any_of(indices)) 
       }) %>% 
-      reduce(full_join) %>% 
+      reduce(full_join, by = join_by(Date, Site, Block, Treatment, Replicate, spu_filename, DateTime)) %>% 
       nest(Indices = contains("VI"))
     return(index_data)
   }
@@ -356,14 +357,19 @@ calculate_indices3 <-
 standard_site_names <- function(unispec_file) {
   # Standardize Site names from 2019 version to 2020 onward
   unispec_file <- unispec_file %>%
-    mutate(Site = ifelse(Site %in% c("WSG1", "WSG23", "WSG", "WSG2"), "WSG89", Site)) %>%
-    mutate(Site = ifelse(Site %in% c("DHT", "DH","HTH", "HEATH","LHTH"), "DHT89", Site)) %>%
-    mutate(Site = ifelse(Site %in% c("MAT", "MAT-SH"), "MAT89", Site)) %>%
-    mutate(Site = ifelse(Site %in% c("LMAT", "LOF"), "MAT06", Site)) %>%
-    mutate(Site = ifelse(Site %in% c("HIST", "HIST81", "HST", "HIS"), "MAT81", Site)) %>%
-    mutate(Site = ifelse(Site %in% c("SHB2", "SHB1", "SHB"), "SHB89", Site)) %>%
-    mutate(Site = ifelse(Site %in% c("MNAT"), "MNT97", Site)) %>%
-    mutate(Site = ifelse(Site %in% c("NANT", "NNT97"), "MNN97", Site))
+    mutate(
+      Site = case_when(
+        Site %in% c("WSG1", "WSG23", "WSG", "WSG2", "WSGB") ~ "WSG89",
+        Site %in% c("DHT", "DH", "HTH", "HEATH", "LHTH") ~ "DHT89",
+        Site %in% c("MAT", "MAT-SH") ~ "MAT89",
+        Site %in% c("LMAT", "LOF") ~ "MAT06",
+        Site %in% c("HIST", "HIST81", "HST", "HIS") ~ "MAT81",
+        Site %in% c("SHB2", "SHB1", "SHB", "SHBB", "LSHB") ~ "SHB89",
+        Site %in% c("MNAT") ~ "MNT97",
+        Site %in% c("NANT", "NNT97") ~ "MNN97",
+        .default = Site
+      )
+    )
   return(unispec_file)
 }
 
@@ -456,7 +462,7 @@ site_name <- function(spu_filename, site_year) {
   if (site_year > "2016") {
     Site <- toupper(str_extract(spu_filename, "^([a-zA-Z]+)([0-9]+)?((-[a-zA-Z]+)([0-9]+)?)*"))
   } else {
-    # For 2016 file names are MMMDDsiteFilenumber, e.g. JUL10LOF00006.spu
+    # For 2016 file names are MMMDDsiteFilenumber, e.g. JUL10LOF00006.spu and sometimes with B1 or B2 added.
     Site <- toupper(str_replace(spu_filename, "(^.*?\\d{1,2})\\s*([a-zA-Z]*)(\\d{5,7}\\.spu$)", "\\2"))
     # For 2012 and 2013 the spu filenames have ddmmmsite format; need to remove the 3 letter month 
     # which was extracted with the site.
