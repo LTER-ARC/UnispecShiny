@@ -64,9 +64,10 @@ read_spu_file_metadata <- function(filepath, filename, info = "short") {
 
   # Line 2:
   Remarks <- text[2]
+  # Identify the scan. Note: Datascan,DC can be a Throwaway or Reference.  The Key file will determine which one.
   ScanType<- case_when(
     str_detect(Remarks,"DARKscan") ~  "DARKscan",
-    str_detect(Remarks,"Datascan,DC") ~  "Throwawayscan",
+    str_detect(Remarks,"Datascan,DC") ~  "Non-Datascan",
     str_detect(Remarks,"RCF") ~ "Unispec-Corrected",
     str_detect(Remarks,"Datascan") ~ "Datascan"                  
   )
@@ -474,4 +475,37 @@ site_name <- function(spu_filename, site_year) {
     }
   }
   return(Site)
+}
+keys_2_spu <- function(key_file) {
+  # Check for required column names
+  name_check <- "FileNum"
+  wb_sheets <- openxlsx::getSheetNames(key_file)
+  key_sheet <- NULL
+  for (i in wb_sheets) {
+    column_names <- openxlsx::read.xlsx(key_file, sheet = i, colNames = T, rows = 1)
+    if (name_check %in% names(column_names)) {
+      key_sheet <- i
+      break
+    }
+  }
+  # Read in key data and join in the spu_filename
+  df <- tryCatch({
+    
+  key_file %>%
+    purrr::map(function(file_name) {
+      as_tibble(openxlsx::read.xlsx(file_name, sheet = key_sheet, detectDates = T, cols = c(1:8)))
+    }) %>%
+    reduce(rbind) %>%
+    mutate(across(where(is.character), str_trim)) %>%
+    standard_site_names() %>%
+    separate_rows(Site, sep = "-") %>% 
+    mutate(Location = as.character(Location),
+           Notes = as.character(Notes))
+  }, warning = function(war) {
+    print(key_file)
+  }, error = function(err) {
+    # Is executed if error encountered
+  })
+
+  return(df)
 }
