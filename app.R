@@ -407,7 +407,7 @@ server <- function(input, output, session) {
    full_join(key_spu_data(), ref_int_values(),
      by = c("Date", "Site"),
      suffix = c(".data", ".ref"), relationship = "many-to-many"
-   ) %>%
+      ) %>%
      group_by(Date, Site, FileNum) %>%
      ## assign the "Integration.ref" value closest to data scan integration time
      mutate(Integration.ref = ifelse(is.na(Integration.ref), Integration.ref,
@@ -442,13 +442,14 @@ server <- function(input, output, session) {
 
    data_corrected_ref_integration() %>%
      select(-ChB, -ChA, -raw_reflectance, -correction_factor) %>%
-     filter(!toupper(Treatment) %in% c("DARK", "REF", "IGNOR") | !is.na(Treatment)) %>%
+     # remove non-data (ref, dark, throwaway) scans
+     dplyr::filter(str_detect(Treatment, "REF|DARK|THROWAWAY|IGNOR",negate = TRUE),
+                   !is.na(Treatment)) %>%
      rename(Reflectance = corrected_reflectance) %>%
      # Calculate Indices as defined in helper.R
      calculate_indices3(instruments) %>%
      unnest(cols = c(Indices)) %>%
      mutate(across(where(is.factor), as.character)) %>% # Convert factors so we can filter
-     dplyr::filter(!toupper(Treatment) %in% c("DARK", "REF", "IGNOR", "Throwawayscan")) %>%
      mutate(
        Block = as.numeric(str_extract(Block, "\\d")), # convert "B1", etc  to numeric
        Year = lubridate::year(DateTime),
@@ -462,8 +463,6 @@ server <- function(input, output, session) {
 
     indices_data() %>%
       mutate(collection_year = "Current") %>%
-      # remove non-data (ref, dark, throwaway) scans
-      filter(!str_detect(Treatment, "REF|DARK|THROWAWAY")|!is.na(Treatment)) %>%
       full_join(past_indices_data(), by = c(
         "Year", "Date", "DateTime", "Site", "Treatment",
         "DOY", "collection_year", "Replicate", "Block", index2plot
@@ -478,7 +477,9 @@ server <- function(input, output, session) {
   processed_spectra <- reactive({
     data_corrected_ref_integration() %>%
       mutate(across(where(is.factor), as.character)) %>% # Convert factors so we can filter
-      dplyr::filter(!toupper(Treatment) %in% c("DARK", "REF", "IGNOR")) %>%
+      # remove non-data (ref, dark, throwaway) scans
+      dplyr::filter(str_detect(Treatment, "REF|DARK|THROWAWAY|IGNOR",negate = TRUE),
+                    !is.na(Treatment)) %>%
       mutate(Block = as.numeric(str_extract(Block, "\\d"))) # convert "B1", etc to numeric
   })
 
@@ -487,21 +488,25 @@ server <- function(input, output, session) {
   ## Check for missing information --------------------------------------------
   missing_info <- reactive({
     req(key_spu_data())
-    key_spu_data() %>%
-      filter(Site %in% input$choice_site) %>% # Only show checks on selected site.
+      key_spu_data() %>% 
       filter(
+        # Only show checks on selected site. 
+        Site %in% input$choice_site,
+        # One long OR statement
         is.na(spu_filename) |
           is.na(Site) |
-          # Block with NA's should always be REFS or EXTRA
+          # Check for Blocks with NA's but not REFS or DARK
           is.na(Block) & !str_detect(Treatment, "REF|DARK|VEG") |
-          # Check for replicates with NA's that aren't REF
+          # Check for replicates with NA's that aren't REF|DARK|THROWAWAY
           is.na(Replicate) & !str_detect(Treatment, "REF|DARK|THROWAWAY"),
+        
         # don't care about EXTRA, VEG, or REF scans
         Treatment != "EXTRA|VEG|REF"
       ) %>%
       # reorder columns to see output better
       select(spu_filename, FileNum, Site, Block, Treatment, Replicate)
   })
+  
   ## Check for number of scans that are not 5 or 10.----
   treatment_odd_number <- reactive({
     filter(key_spu_data(), key_spu_data()$Site %in% input$choice_site) %>%
@@ -511,6 +516,7 @@ server <- function(input, output, session) {
   })
   ## Table of checks ------------------------------------------------------
   checks_table <- reactive({
+    
     spu_df_selected_site <- spu_df() %>% filter(Site %in% input$choice_site)
     spu_sites <- str_c(str_replace_na(unique(spu_df_selected_site$Site)), collapse = ",")
     key_sites <- str_c(str_replace_na(unique(keys()$Site)), collapse = ",")
@@ -519,12 +525,12 @@ server <- function(input, output, session) {
       ", match what's entered in key file -",
       nrow(filter(keys(), keys()$Site %in% input$choice_site)), "?"
     )
-    site_check <- paste("Site used in spu files' names,", spu_sites, ", should match site in key file:", input$choice_site)
+#    site_check <- paste("Site used in spu files' names,", spu_sites, ", should match site in key file:", input$choice_site)
     maxedspectra <- if (nrow(maxed_files()) == 0) { # {
       paste("No maxed out specra.")
     }
     maxed_dt <- datatable(maxed_files(), caption = "Maxed out spu files.")
-    txt_s <- datatable(tibble(Checks = c(site_check, file_check)),
+    txt_s <- datatable(tibble(Checks = c(file_check)),
       options = list(dom = "t")
     )
     return(txt_s)
@@ -534,7 +540,7 @@ server <- function(input, output, session) {
   files_not_in_key <- reactive({
     data.frame(
       spuFiles_Not_in_Keys = anti_join(spu_df(), key_spu_data(),
-        by = c("Date", "FileNum", "Site")
+        by = c("Date", "spu_filename", "Site")
       ) %>%
         filter(Site %in% input$choice_site) %>%
         pull(spu_filename)
@@ -848,10 +854,13 @@ server <- function(input, output, session) {
   # Save Files buttons ------------------------------------------------------------
   output$download_corrected_spectra_data <- downloadHandler(
     filename = function() {
-      paste0(data_corrected_ref_integration()$Date[1], "_corrected_spectra.rds")
+      paste0(data_corrected_ref_integration()$Date[1], "_", input$choice_site, "_corrected_spectra.rds")
     },
     content = function(file) {
-      write_rds(data_corrected_ref_integration(), file)
+      write_rds(data_corrected_ref_integration() %>% 
+                  # remove non-data (ref, dark, throwaway) scans
+                  dplyr::filter(str_detect(Treatment, "REF|DARK|THROWAWAY|IGNOR",negate = TRUE),
+                                !is.na(Treatment)), file)
     }
   )
   output$download_key_spu_data <- downloadHandler(
@@ -864,7 +873,7 @@ server <- function(input, output, session) {
   )
   output$download_indices_data <- downloadHandler(
     filename = function() {
-      paste0(indices_data()$Date[1], "_indices.rds")
+      paste0(indices_data()$Date[1], "_", input$choice_site, "_indices.rds")
     },
     content = function(file) {
       write_rds(indices_data(), file)
@@ -935,7 +944,7 @@ server <- function(input, output, session) {
             DT::dataTableOutput("all_data"),
             downloadButton("download_corrected_spectra_data", "Save corrected spectra as .rds")
           ),
-          tabPanel(
+          tabPanel("Indices",
             index2plot,
             DT::dataTableOutput("indices"),
             h3("Save indices button saves a .rds file with all the calculated indices."),
