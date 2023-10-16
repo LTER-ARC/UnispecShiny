@@ -162,15 +162,15 @@ server <- function(input, output, session) {
   instruments <- tibble(sensor = c("modis", "micasense"), indices = c("NDVI", "NDVI,NDVIRE"))
   # index2plot id used in the output plots
   index2plot <- "modisNDVI"
-  # Template sheet name to use as a check for correct sheet
+  # Template sheet column names to use as a check for correct sheet
   # !!!Change if the template file changes!!!!
-  header_check <- "FileNum"
-  sheet_check <- "LongFormat"
+  header_check <- c("Date","Site","Block","Treatment", "Replicate", "FileNum")
+  
   # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
   past_indices_data <- reactive({
     if (is.null(input$multiyear_indices_file)) {
-      readRDS("data/indices_2014-2022.rds") %>% 
+      readRDS("data/indices_2007-2022.rds") %>% 
       mutate(across(where(is.factor), as.character)) %>%  # Remove factors for joining to current data
         mutate(Replicate = as.numeric(Replicate))
     } else {
@@ -211,7 +211,7 @@ server <- function(input, output, session) {
       site_subset() %>% select(spu_filename)
     },
     Spectra_maxed = {
-      maxed_files()$spu_filename
+      filter(site_subset(),spu_filename %in% maxed_files()$spu_filename)$spu_filename
     },
     {
       unique(filter(site_subset(), Treatment %in% input$treatments)$spu_filename)
@@ -273,11 +273,15 @@ server <- function(input, output, session) {
     # Read in key data and join in the spu_filename
     df <- input$key_file$datapath %>%
       purrr::map(function(file_name) {
-        as_tibble(openxlsx::read.xlsx(file_name, sheet = key_sheet, detectDates = T, cols = c(1:7)))
+        as_tibble(openxlsx::read.xlsx(file_name, sheet = key_sheet, detectDates = T))
       }) %>%
       reduce(rbind) %>%
-      mutate(across(where(is.character), str_trim),
-                    FileNum = as.character(FileNum)) %>% # Change to character; REF will be concatenated to file number
+      select(all_of(header_check)) %>% 
+      mutate(
+        across(where(is.character), str_trim),
+        FileNum = as.character(FileNum),  # Change to character; REF will be concatenated to file number
+        Site = toupper(Site)
+        ) %>%
       filter(Date %in% spu_df()$Date, Site %in% spu_df()$Site)
     #arrange(Site, spu_filename) %>%
      
@@ -375,7 +379,10 @@ server <- function(input, output, session) {
         correction_factor = mean(correction_factor),
         # Add all the ref spu filenames to variable ref_filename
         ref_filenames = str_c(spu_filename, collapse = ", "), .groups = "keep"
-      ) %>%
+      ) %>% 
+      mutate(
+             correction_factor_check = ifelse(correction_factor < 1,"ChB>ChA","OK")
+            ) %>% 
       rename(Integration.ref = Integration)
 
     shinyFeedback::feedbackWarning(
