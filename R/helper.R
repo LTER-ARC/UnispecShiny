@@ -60,7 +60,8 @@ read_spu_file_metadata <- function(filepath, filename, info = "short") {
   # Line 1: Extract the file name in the spu file as a check. Some file names have spaces
   spu_filename <- stringr::str_replace(text[1], ".*[\\\\]([A-z0-9.]\\s*)", "\\1") %>% # extract filename
     str_replace("\"", "") # removes trailing quote at end of line
-  FileNum <- stringr::str_extract(spu_filename, "\\d{4,6}") %>% as.numeric() # from 5 digits in filename
+  
+  FileNum <- stringr::str_extract(filename, "(\\d{4,7})") %>% as.numeric() # from 4-7digits in filename
 
   # Line 2:
   Remarks <- text[2]
@@ -111,7 +112,7 @@ read_spu_file_metadata <- function(filepath, filename, info = "short") {
     relocate(Date, .after = DateTime)
 
   if (info == "short") {
-    metadata <- metadata %>% select(spu_filename, Site, DateTime, FileNum, Integration,ScanType)
+    metadata <- metadata %>% select(spu_filename, Site, DateTime, Date, FileNum, Integration,ScanType)
   }
 
   # Print filenames while reading
@@ -360,14 +361,15 @@ standard_site_names <- function(unispec_file) {
   unispec_file <- unispec_file %>%
     mutate(
       Site = case_when(
-        Site %in% c("WSG1", "WSG23", "WSG", "WSG2", "WSGB") ~ "WSG89",
-        Site %in% c("DHT", "DH", "HTH", "HEATH", "LHTH") ~ "DHT89",
-        Site %in% c("MAT", "MAT-SH") ~ "MAT89",
+        Site %in% c("WSG1", "WSG23", "WSG", "WSG2", "WSGB","LWSG", "WSD", "WS","TLSE","OUTSE") ~ "WSG89",
+        Site %in% c("DHT", "DH", "HTH", "HEATH", "LHTH","HTHB") ~ "DHT89",
+        Site %in% c("MAT", "MAT-SH", "MATSL", "MATSH") ~ "MAT89",
         Site %in% c("LMAT", "LOF") ~ "MAT06",
         Site %in% c("HIST", "HIST81", "HST", "HIS") ~ "MAT81",
-        Site %in% c("SHB2", "SHB1", "SHB", "SHBB", "LSHB") ~ "SHB89",
+        Site %in% c("SHB2", "SHB1", "SHB", "SHBB", "LSHB", "SH", "SHRB") ~ "SHB89",
         Site %in% c("MNAT") ~ "MNT97",
-        Site %in% c("NANT", "NNT97") ~ "MNN97",
+        Site %in% c("NANT", "NNT97","NMNT") ~ "MNN97",
+        Site %in% c("LMATEDC") ~ "EDC",
         .default = Site
       )
     )
@@ -409,7 +411,7 @@ find_sheet <- function(key_file, name_check) {
   key_sheet <- NULL
   for (i in wb_sheets) {
     column_names <- openxlsx::read.xlsx(key_file, sheet = i, colNames = T, rows = 1)
-    if (name_check %in% names(column_names)) {
+    if (all(name_check %in% names(column_names))) {
       key_sheet <- i
       break
     }
