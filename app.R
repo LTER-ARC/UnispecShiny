@@ -85,12 +85,12 @@ ui <- fluidPage(
   titlePanel("Arctic LTER Spectral Reflectance Data"),
   sidebarLayout(
     sidebarPanel(
-      #helpText("Default Multi-year file loaded = indices_2014-current.rds."),
+      #helpText("Default Multi-year file loaded = indices_2007-current.rds."),
       # Note input$multiyear_indices_file is a data frame - name, size, and datapath (path and file name)
       fileInput(
         "multiyear_indices_file",
-        "Default file:indices_2014-current.rds. Upload a new multiyear indices.rds file?",
-        placeholder = "indices_2014-current.rds",
+        "Default file:indices_2007-current.rds. Upload a new multiyear indices.rds file?",
+        placeholder = "indices_2007-current.rds",
         multiple = FALSE,
         accept = c(".rds")
       ),
@@ -172,12 +172,14 @@ server <- function(input, output, session) {
     if (is.null(input$multiyear_indices_file)) {
       readRDS("data/indices_2007-2022.rds") %>% 
       mutate(across(where(is.factor), as.character)) %>%  # Remove factors for joining to current data
-        mutate(Replicate = as.numeric(Replicate))
+        mutate(Replicate = as.numeric(Replicate),
+               collection_year = "Past")
     } else {
       # Get the multiyear indices file but first check extension of file
       check_ext("multiyear_indices_file", input$multiyear_indices_file$name, "rds", "Invalid file; Please select a .rds file")
       readRDS(input$multiyear_indices_file$datapath) %>% 
-      mutate(across(where(is.factor), as.character)) # Remove factors for joining to current data
+      mutate(across(where(is.factor), as.character),
+             collection_year = "Past") # Remove factors for joining to current data
     }
   })
 
@@ -280,8 +282,10 @@ server <- function(input, output, session) {
       mutate(
         across(where(is.character), str_trim),
         FileNum = as.character(FileNum),  # Change to character; REF will be concatenated to file number
-        Site = toupper(Site)
+        Site = toupper(Site),
+        Treatment = toupper(Treatment)
         ) %>%
+      standard_site_names() %>% 
       filter(Date %in% spu_df()$Date, Site %in% spu_df()$Site)
     #arrange(Site, spu_filename) %>%
      
@@ -309,10 +313,11 @@ server <- function(input, output, session) {
     spu_filedata <- pmap_dfr(list(input$spu_file$datapath, input$spu_file$name), read_spu_file_metadata) %>%
       # Read in spectra data
       mutate(Spectra = map(input$spu_file$datapath, function(x) read_spu_file_spectra(x))) %>%
-      mutate(Date = date(DateTime)) %>%
+     # mutate(Date = date(DateTime)) %>%
       relocate(Date, .after = DateTime) %>%
-      mutate(Date = unique(Date)[1],# Case where the time was off and some of the scans' times were the next day.
-             FileNum = as.character(FileNum)) # Change to character; REF will be concatenated to file number)
+      mutate(                                 #Date = unique(Date)[1],# Case where the time was off and some of the scans' times were the next day.
+             FileNum = as.character(FileNum)) %>%  # Change to character; REF will be concatenated to file number)
+      standard_site_names()
       #
     return(spu_filedata)
   })
@@ -326,12 +331,11 @@ server <- function(input, output, session) {
 
     fd <- left_join(spu_df(),keys(),  by = c("Date", "Site", "FileNum")) %>%
       #filter(!is.na(Treatment)) %>% 
-      arrange(DateTime) %>%
+      arrange(Date) %>%
       mutate_at(.vars = vars(Site, Block, Treatment), .funs = factor) %>% 
       # Give References a unique File Number for cases where a reference scan from a different site is used.
       mutate(FileNum = ifelse(Treatment %in% c("REF","DARK"),paste0(Treatment,FileNum),FileNum)) %>% 
-      # Separate any multi site reference scans, e.g. MNT97-NNT97
-      separate_rows(Site, sep = "-") %>% 
+      separate_rows(Site, sep = "-") %>%  # Separate any multi site reference scans, e.g. MNT97-NNT97
       standard_site_names()
 
     shinyFeedback::feedbackWarning(
@@ -405,6 +409,7 @@ server <- function(input, output, session) {
       separate_rows(Site, sep = "-") %>%
       rename(Integration = Integration.ref) # rename for joining
   })
+  
   ###  3) Join reference scan integration time     ------------------------
   #     to the nearest data scan integration time. If several integration times
   #     there will be a many-to-many relationship. After assigning a integration
@@ -471,7 +476,7 @@ server <- function(input, output, session) {
     indices_data() %>%
       mutate(collection_year = "Current") %>%
       full_join(past_indices_data(), by = c(
-        "Year", "Date", "DateTime", "Site", "Treatment",
+        "Year", "Date", "Site", "Treatment",
         "DOY", "collection_year", "Replicate", "Block", index2plot
       )) %>%
       arrange(Date) %>%
@@ -696,9 +701,13 @@ server <- function(input, output, session) {
   ## --- Plot References Tab-------------------------------------------------------
 
   output$ref_plot1 <- renderPlotly({
+    data_ref <-  data_corrected_ref_integration() %>%
+      filter(Site == input$choice_site, Treatment == "REF")
+    if(nrow(data_ref) == 0) {
+      return()
+    }
     plotly::ggplotly(
-      data_corrected_ref_integration() %>%
-        filter(Site == input$choice_site, Treatment == "REF") %>%
+      data_ref %>%
         ggplot(mapping = aes(
           x = Wavelength, y = raw_reflectance,
           group_by = spu_filename
@@ -718,9 +727,14 @@ server <- function(input, output, session) {
   })
 
   output$ref_plot2 <- renderPlotly({
+    
+    data_ref <-  data_corrected_ref_integration() %>%
+      filter(Site == input$choice_site, Treatment == "REF")
+    if(nrow(data_ref) == 0) {
+      return()
+    }
     plotly::ggplotly(
-      data_corrected_ref_integration() %>%
-        filter(Site == input$choice_site, Treatment == "REF") %>%
+      data_ref %>%
         ggplot(
           mapping =
             aes(
@@ -840,7 +854,8 @@ server <- function(input, output, session) {
       filter(Site %in% input$choice_site, Treatment %in% input$choice_treatment) %>%
       select(Site, Year, Date, DOY, Treatment, Block, Replicate, any_of(index2plot), collection_year) %>%
       filter(collection_year %in% d$customdata) %>%
-      filter(DOY %in% d$x)
+      filter(DOY %in% d$x) %>% 
+      filter(Year == Year[d$curveNumber])
     if (nrow(click_data) == 0) {
       return()
     }
@@ -888,7 +903,7 @@ server <- function(input, output, session) {
   )
   output$update_all_data <- downloadHandler(
     filename = function() {
-      paste0("indices_2014-current.rds")
+      paste0("indices_2007-current.rds")
     },
     content = function(file) {
       write_rds(past_data_all(), file)
