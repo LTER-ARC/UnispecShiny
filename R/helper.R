@@ -361,10 +361,11 @@ standard_site_names <- function(unispec_file) {
   unispec_file <- unispec_file %>%
     mutate(
       Site = case_when(
-        Site %in% c("WSG1", "WSG23", "WSG", "WSG2", "WSGB","LWSG", "WSD", "WS","TLSE","OUTSE") ~ "WSG89",
+        Site %in% c("WSG1", "WSG23", "WSG", "WSG2", "WSGB","LWSG", "WSD", "WS",
+                    "WSI", "WSO", "TLSE", "OUTSE") ~ "WSG89",
         Site %in% c("DHT", "DH", "HTH", "HEATH", "LHTH","HTHB") ~ "DHT89",
-        Site %in% c("MAT", "MAT-SH", "MATSL", "MATSH") ~ "MAT89",
-        Site %in% c("LMAT", "LOF") ~ "MAT06",
+        Site %in% c("MAT", "MAT-SH", "MATSL", "MATSH","MATB") ~ "MAT89",
+        Site %in% c("LMAT", "LOF","LOFB","LOW") ~ "MAT06",
         Site %in% c("HIST", "HIST81", "HST", "HIS") ~ "MAT81",
         Site %in% c("SHB2", "SHB1", "SHB", "SHBB", "LSHB", "SH", "SHRB") ~ "SHB89",
         Site %in% c("MNAT") ~ "MNT97",
@@ -465,16 +466,11 @@ site_name <- function(spu_filename, site_year) {
   if (site_year > "2016") {
     Site <- toupper(str_extract(spu_filename, "^([a-zA-Z]+)([0-9]+)?((-[a-zA-Z]+)([0-9]+)?)*"))
   } else {
-    # For 2016 file names are MMMDDsiteFilenumber, e.g. JUL10LOF00006.spu and sometimes with B1 or B2 added.
-    Site <- toupper(str_replace(spu_filename, "(^.*?\\d{1,2})\\s*([a-zA-Z]*)(\\d{5,7}\\.spu$)", "\\2"))
+    # For 2016, file names are MMMDDsiteFilenumber, e.g. JUL10LOF00006.spu and sometimes with B1 or B2 added.
+    Site <- toupper(str_extract(spu_filename,"(^.*?\\d{1,2})\\s*([a-zA-Z-]*)(\\d{4,7})", group = 2))
     # For 2012 and 2013 the spu filenames have ddmmmsite format; need to remove the 3 letter month 
     # which was extracted with the site.
-    if (str_length(Site) > 5) {
-      pattern <- c("MAY", "JUN", "JUL", "AUG")
-      for (i in 1:4) {
-        Site <- sub(pattern[i], "", Site)
-      }
-    }
+    Site <- str_remove(Site,"MAY|JUN|JUL|AUG") 
   }
   return(Site)
 }
