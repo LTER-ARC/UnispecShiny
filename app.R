@@ -170,7 +170,7 @@ server <- function(input, output, session) {
 
   past_indices_data <- reactive({
     if (is.null(input$multiyear_indices_file)) {
-      readRDS("data/indices_2007-2022.rds") %>% 
+      readRDS("data/indices_2007-2023.rds") %>% 
       mutate(across(where(is.factor), as.character)) %>%  # Remove factors for joining to current data
         mutate(Replicate = as.numeric(Replicate),
                collection_year = "Past")
@@ -816,30 +816,44 @@ server <- function(input, output, session) {
   })
   
   # Past Years Plot Tab-------------------------------------------
-
+ 
+   # Summarize the data by the index to plot. Note the .data[[ ]] is used to
+  # get the data of the variable index2plot and !!()function is used to
+  # get the name of the column
+  sub_df <- reactive(
+    past_data_all() %>%
+    select(Site, Year, Date, DOY, Treatment, any_of(index2plot), collection_year) %>%
+    group_by(collection_year, Site, Year, Date, DOY, Treatment) %>%
+    filter(Site %in% input$choice_site, Treatment %in% input$choice_treatment) %>%
+    summarize(
+      sd = sd(.data[[index2plot]], na.rm = T),
+      !!(index2plot) := mean(.data[[index2plot]], na.rm = T), .groups = "keep"
+    )
+    )
+  
   output$plot_past_years <- renderPlotly({
     # Summarize the data by the index to plot. Note the .data[[ ]] is used to
     # get the data of the variable index2plot and !!()function is used to
     # get the name of the column
-    sub_df <- past_data_all() %>%
-      select(Site, Year, Date, DOY, Treatment, any_of(index2plot), collection_year) %>%
-      group_by(collection_year, Site, Year, Date, DOY, Treatment) %>%
-      filter(Site %in% input$choice_site, Treatment %in% input$choice_treatment) %>%
-      summarize(
-        sd = sd(.data[[index2plot]], na.rm = T),
-        !!(index2plot) := mean(.data[[index2plot]], na.rm = T), .groups = "keep"
-      )
+    # sub_df <- past_data_all() %>%
+    #   select(Site, Year, Date, DOY, Treatment, any_of(index2plot), collection_year) %>%
+    #   group_by(collection_year, Site, Year, Date, DOY, Treatment) %>%
+    #   filter(Site %in% input$choice_site, Treatment %in% input$choice_treatment) %>%
+    #   summarize(
+    #     sd = sd(.data[[index2plot]], na.rm = T),
+    #     !!(index2plot) := mean(.data[[index2plot]], na.rm = T), .groups = "keep"
+    #   )
 
-    if (nrow(sub_df) == 0) {
+    if (nrow(sub_df()) == 0) {
       return()
     }
     ## Plot current and past data----
     plotly::ggplotly(
-      ggplot(data = sub_df, aes(x = DOY, y = .data[[index2plot]], customdata = collection_year)) +
-        geom_point(data = sub_df %>% filter(collection_year == "Past"), show.legend = FALSE) +
-        geom_line(data = sub_df) +
+      ggplot(data = sub_df(), aes(x = DOY, y = .data[[index2plot]], customdata = collection_year)) +
+        geom_point(data = sub_df() %>% filter(collection_year == "Past"), show.legend = FALSE) +
+        geom_line(data = sub_df()) +
         aes(color = factor(Year), linetype = factor(Year)) +
-        geom_point(data = sub_df %>% filter(collection_year == "Current"), size = 4) +
+        geom_point(data = sub_df() %>% filter(collection_year == "Current"), size = 4) +
         # scale_size_manual(values=c(4,2))+
         facet_grid(Site ~ Treatment) +
         # formatting
@@ -850,12 +864,13 @@ server <- function(input, output, session) {
   # Get click data
   output$click <- renderPlotly({
     d <- event_data("plotly_click")
+    click_data_year <-sub_df() %>% filter(modisNDVI %in% d$y) %>% .$Year
     click_data <- past_data_all() %>%
       filter(Site %in% input$choice_site, Treatment %in% input$choice_treatment) %>%
       select(Site, Year, Date, DOY, Treatment, Block, Replicate, any_of(index2plot), collection_year) %>%
       filter(collection_year %in% d$customdata) %>%
       filter(DOY %in% d$x) %>% 
-      filter(Year == Year[d$curveNumber])
+      filter(Year %in% click_data_year)
     if (nrow(click_data) == 0) {
       return()
     }
